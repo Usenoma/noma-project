@@ -8,6 +8,7 @@ import { syncSupplierCatalog } from "../modules/catalog/service.js";
 import { fulfill, markFulfillmentFailed, SupplierPendingError } from "../modules/fulfillment/service.js";
 import { refreshEthPrice } from "../modules/payments/priceFeed.js";
 import { watchPayments } from "../modules/payments/watcher.js";
+import { checkHealth, markRun } from "../modules/health/monitor.js";
 import { processRefund, startRefund, type RefundKind } from "../modules/refunds/service.js";
 import { advanceCycle, executeDueCycle } from "../modules/rewards/executor.js";
 import { indexRewards } from "../modules/rewards/indexer.js";
@@ -70,7 +71,10 @@ async function releaseExpiredResources() {
 const processors: Record<QueueName, Processor> = {
   [QUEUE.catalogSync]: catalogSync,
   [QUEUE.supplierBalance]: supplierBalances,
-  [QUEUE.paymentWatcher]: watchPayments,
+  [QUEUE.paymentWatcher]: async () => {
+    await watchPayments();
+    await markRun("payment-watcher");
+  },
   [QUEUE.priceFeed]: refreshEthPrice,
   [QUEUE.resourceExpiry]: releaseExpiredResources,
   [QUEUE.fulfillment]: (job: Job<{ orderId: string }>) => fulfill(job.data.orderId),
@@ -79,9 +83,12 @@ const processors: Record<QueueName, Processor> = {
   [QUEUE.rewardIndexer]: async () => {
     await indexStaking();
     await indexRewards();
+    await markRun("reward-indexer");
   },
   [QUEUE.rewardExecutor]: async (job: Job<{ cycleId?: number }>) =>
     job.data.cycleId ? advanceCycle(job.data.cycleId) : executeDueCycle(),
+  // stale pollers, stuck RPC head, fulfillment failure rate
+  [QUEUE.health]: checkHealth,
 };
 
 /** Repeatable schedules (backend.md §10). Chain workers only run once the chain is configured. */
@@ -93,6 +100,7 @@ const schedules: { queue: QueueName; everyMs: number; needsChain?: boolean }[] =
   { queue: QUEUE.paymentWatcher, everyMs: 10_000, needsChain: true },
   { queue: QUEUE.rewardIndexer, everyMs: 5_000, needsChain: true },
   { queue: QUEUE.rewardExecutor, everyMs: 60_000, needsChain: true },
+  { queue: QUEUE.health, everyMs: 60_000 },
 ];
 
 async function main() {

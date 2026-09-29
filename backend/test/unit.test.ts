@@ -11,6 +11,7 @@ import { depositAddress } from "../src/chain/depositAddress.js";
 import { combineQuotes } from "../src/modules/payments/priceFeed.js";
 import { pickRequiredFields } from "../src/modules/orders/service.js";
 import { formatAlert } from "../src/lib/alerts.js";
+import { failureRateExceeded, quietSeconds } from "../src/modules/health/monitor.js";
 
 describe("crypto", () => {
   const key = Buffer.alloc(32, 1);
@@ -117,5 +118,20 @@ describe("alerts", () => {
 cycleId: 3
 safeTxHash: 0xab
 obj: {"n":"1"}`);
+  });
+});
+
+describe("health monitor", () => {
+  it("flags a fulfillment failure rate only with enough failures", () => {
+    expect(failureRateExceeded(2, 0)).toBe(false); // too few to matter
+    expect(failureRateExceeded(3, 9)).toBe(true); // 25%
+    expect(failureRateExceeded(3, 10)).toBe(false);
+  });
+
+  it("measures poller silence from the later of last pass and process start", () => {
+    const start = 1_000_000;
+    expect(quietSeconds(null, start + 60_000, start)).toBe(60);
+    expect(quietSeconds(start - 86_400_000, start + 30_000, start)).toBe(30); // stale key from before a restart
+    expect(quietSeconds(start + 50_000, start + 80_000, start)).toBe(30);
   });
 });

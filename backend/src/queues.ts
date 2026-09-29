@@ -11,6 +11,7 @@ export const QUEUE = {
   supplierBalance: "supplier-balance-monitor",
   rewardIndexer: "reward-indexer",
   rewardExecutor: "reward-executor",
+  health: "health-monitor",
 } as const;
 
 export type QueueName = (typeof QUEUE)[keyof typeof QUEUE];
