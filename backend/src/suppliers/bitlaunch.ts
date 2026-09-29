@@ -8,6 +8,7 @@ const HOST_ID = 4;
 export const VPS_LIFETIME_DAYS = 30;
 /** Only offer mainstream Linux images; Windows carries undocumented extra licence cost. */
 const IMAGE_ALLOWLIST = /^(ubuntu|debian|rocky|alma|fedora)/i;
+const MAX_VERSIONS_PER_OS = 3;
 
 interface ImageVersion {
   id: string;
@@ -25,6 +26,7 @@ interface HostImage {
 }
 interface Subregion {
   id: string;
+  slug?: string;
   description: string;
   unavailableSizes?: string[];
 }
@@ -98,10 +100,14 @@ export function createBitLaunchAdapter(apiToken: string, passwordSecret: Buffer)
       const products: NormalizedProduct[] = [];
 
       for (const region of opts.region) {
-        for (const sub of region.subregions ?? (region.subregion ? [region.subregion] : [])) {
+        const subs = region.subregions ?? (region.subregion ? [region.subregion] : []);
+        for (const sub of subs) {
+          // subregion "description" is just an index ("1", "3"); the city is region.name
+          const location = subs.length > 1 ? `${region.name} (${sub.slug ?? sub.id})` : region.name;
           const osOptions = images
             .filter((i) => !i.unavailableRegions?.includes(sub.id))
-            .flatMap((i) => imageVersions(i).filter((v) => !v.passwordUnsupported).map((v) => ({ value: v.id, label: `${i.name} ${v.description}` })));
+            // versions are listed newest first; older ones are mostly end-of-life
+            .flatMap((i) => imageVersions(i).filter((v) => !v.passwordUnsupported).slice(0, MAX_VERSIONS_PER_OS).map((v) => ({ value: v.id, label: v.description })));
           if (!osOptions.length) continue;
           const osField: RequiredField = { name: "os", label: "Operating system", type: "select", options: osOptions };
 
@@ -111,14 +117,14 @@ export function createBitLaunchAdapter(apiToken: string, passwordSecret: Buffer)
             products.push({
               supplierSku: `${sub.id}|${size.id}`,
               category: "vps",
-              title: `VPS ${size.cpuCount} vCPU / ${ramGb} GB RAM / ${size.diskGB} GB SSD, ${sub.description} (${VPS_LIFETIME_DAYS} days)`,
+              title: `VPS ${size.cpuCount} vCPU / ${ramGb} GB RAM / ${size.diskGB} GB SSD, ${location} (${VPS_LIFETIME_DAYS} days)`,
               region: region.iso?.toUpperCase() || null,
               specs: {
                 cpu: size.cpuCount,
                 ram_gb: ramGb,
                 disk_gb: size.diskGB,
-                bandwidth_gb: size.bandwidthGB,
-                location: sub.description,
+                bandwidth_gb: size.bandwidthGB || null, // 0 = not metered
+                location,
                 duration_days: VPS_LIFETIME_DAYS,
               },
               costUsd: size.costPerMonth,
