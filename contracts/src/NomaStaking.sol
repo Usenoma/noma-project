@@ -5,6 +5,7 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title NomaStaking
@@ -19,7 +20,10 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  * - Rewards never expire: accrued rewards stay claimable, and rewards streamed while nobody
  *   is staked are queued and added to that asset's next stream.
  * - ADMIN (asset config, executor management) and EXECUTOR (notifyReward) are held by
- *   different accounts; one account can never hold both.
+ *   different accounts; one account can never hold both. Neither can move staked $NOMA or
+ *   listed reward assets out of the contract.
+ * - A reward token that refuses a transfer (e.g. a Stock Token with transfer restrictions) never
+ *   blocks the others: its payout is skipped, stays claimable, and ClaimFailed is emitted.
  */
 contract NomaStaking is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -74,6 +78,8 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
     event Claimed(address indexed user, address indexed asset, uint256 amount);
     event RewardAssetAdded(address indexed asset);
     event RewardAssetActiveSet(address indexed asset, bool active);
+    event ClaimFailed(address indexed user, address indexed asset, uint256 amount);
+    event TokensRecovered(address indexed token, address indexed to, uint256 amount);
 
     error ZeroAmount();
     error ZeroAddress();
@@ -87,6 +93,7 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
     error TooManyRewardAssets();
     error RoleConflict(address account);
     error InvalidDuration();
+    error CannotRecover(address token);
 
     constructor(IERC20 stakingToken_, address admin, address executor, uint256 unstakeCooldown_, uint256 rewardDuration_) {
         if (address(stakingToken_) == address(0) || admin == address(0) || executor == address(0)) revert ZeroAddress();
@@ -127,8 +134,8 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
         totalStaked -= amount;
 
         PendingUnstake storage p = pendingUnstake[msg.sender];
-        p.amount += uint128(amount);
-        p.unlockAt = uint64(block.timestamp + unstakeCooldown);
+        p.amount = SafeCast.toUint128(uint256(p.amount) + amount);
+        p.unlockAt = SafeCast.toUint64(block.timestamp + unstakeCooldown);
         totalPendingUnstake += amount;
         emit UnstakeRequested(msg.sender, amount, p.unlockAt);
     }
@@ -159,11 +166,13 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
 
     /// @notice Claims a subset of assets (gas-bounded alternative to claimAll).
     function claim(address[] calldata assets) external nonReentrant {
+        // all state updates first, then the external transfers (checks-effects-interactions)
         for (uint256 i; i < assets.length; ++i) {
-            address asset = assets[i];
-            if (!rewardState[asset].listed) revert AssetNotListed(asset);
-            _updateAsset(asset, msg.sender);
-            _payout(asset, msg.sender);
+            if (!rewardState[assets[i]].listed) revert AssetNotListed(assets[i]);
+            _updateAsset(assets[i], msg.sender);
+        }
+        for (uint256 i; i < assets.length; ++i) {
+            _payout(assets[i], msg.sender);
         }
     }
 
@@ -189,8 +198,8 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
         }
         s.queued = 0;
         s.rewardRate = total / rewardDuration;
-        s.lastUpdateTime = uint64(block.timestamp);
-        s.periodFinish = uint64(block.timestamp + rewardDuration);
+        s.lastUpdateTime = SafeCast.toUint64(block.timestamp);
+        s.periodFinish = SafeCast.toUint64(block.timestamp + rewardDuration);
         emit RewardAdded(asset, received, s.periodFinish);
     }
 
@@ -206,7 +215,7 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
         rewardAssets.push(asset);
         rewardState[asset].listed = true;
         rewardState[asset].active = true;
-        rewardState[asset].lastUpdateTime = uint64(block.timestamp);
+        rewardState[asset].lastUpdateTime = SafeCast.toUint64(block.timestamp);
         emit RewardAssetAdded(asset);
     }
 
@@ -215,6 +224,14 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
         if (!rewardState[asset].listed) revert AssetNotListed(asset);
         rewardState[asset].active = active;
         emit RewardAssetActiveSet(asset, active);
+    }
+
+    /// @notice Rescue tokens sent here by mistake. Never the staking token or a listed reward asset.
+    function recoverERC20(address token, address to, uint256 amount) external onlyRole(ADMIN_ROLE) {
+        if (token == address(stakingToken) || rewardState[token].listed) revert CannotRecover(token);
+        if (to == address(0)) revert ZeroAddress();
+        IERC20(token).safeTransfer(to, amount);
+        emit TokensRecovered(token, to, amount);
     }
 
     // ---------------------------------------------------------------------
@@ -267,7 +284,7 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
             } else {
                 s.rewardPerTokenStored += (streamed * PRECISION) / totalStaked;
             }
-            s.lastUpdateTime = uint64(last);
+            s.lastUpdateTime = SafeCast.toUint64(last);
         }
         if (user != address(0)) {
             uint256 rpt = s.rewardPerTokenStored;
@@ -287,8 +304,22 @@ contract NomaStaking is AccessControl, ReentrancyGuard {
         if (amount == 0) return;
         accrued[asset][user] -= amount * RPT_SCALE;
         totalClaimed[asset][user] += amount;
-        IERC20(asset).safeTransfer(user, amount);
-        emit Claimed(user, asset, amount);
+        if (_tryTransfer(asset, user, amount)) {
+            emit Claimed(user, asset, amount);
+            return;
+        }
+        // transfer refused (e.g. restricted Stock Token): undo, keep it claimable for a later attempt
+        accrued[asset][user] += amount * RPT_SCALE;
+        totalClaimed[asset][user] -= amount;
+        emit ClaimFailed(user, asset, amount);
+    }
+
+    /// @dev Like SafeERC20.safeTransfer, but reports failure instead of reverting.
+    function _tryTransfer(address token, address to, uint256 amount) private returns (bool) {
+        (bool ok, bytes memory ret) = token.call(abi.encodeCall(IERC20.transfer, (to, amount)));
+        if (!ok) return false;
+        if (ret.length == 0) return token.code.length > 0;
+        return ret.length >= 32 && abi.decode(ret, (bool));
     }
 
     /// @dev ADMIN (incl. DEFAULT_ADMIN) and EXECUTOR must be different accounts.

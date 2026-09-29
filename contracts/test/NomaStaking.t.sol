@@ -22,6 +22,22 @@ contract MockToken is ERC20 {
     }
 }
 
+/// Stock-token-like asset with transfer restrictions: blocked recipients cannot receive.
+contract RestrictedToken is MockToken {
+    mapping(address => bool) public blocked;
+
+    constructor() MockToken("RSTK", 18) {}
+
+    function setBlocked(address who, bool b) external {
+        blocked[who] = b;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        require(!blocked[to], "recipient not allowed");
+        super._update(from, to, value);
+    }
+}
+
 contract NomaStakingTest is Test {
     uint256 constant WEEK = 7 days;
 
@@ -338,6 +354,90 @@ contract NomaStakingTest is Test {
                 _stake(alice, 1e18);
                 emit log_named_uint(string.concat("steady-state stake gas, assets=", vm.toString(n + 1)), g - gasleft());
             }
+        }
+    }
+
+    // --- review fixes ------------------------------------------------------
+
+    function test_restrictedRewardTokenDoesNotBlockOtherClaims() public {
+        RestrictedToken rstk = new RestrictedToken();
+        vm.prank(admin);
+        staking.addRewardAsset(address(rstk));
+        rstk.mint(executor, 10e18);
+        vm.startPrank(executor);
+        rstk.approve(address(staking), type(uint256).max);
+        staking.notifyReward(address(rstk), 7e18);
+        staking.notifyReward(address(zec), 7e8);
+        vm.stopPrank();
+        _stake(alice, 100e18);
+        skip(WEEK);
+
+        rstk.setBlocked(alice, true);
+        uint256 owed = staking.earned(alice, address(rstk));
+        vm.expectEmit(true, true, false, true);
+        emit NomaStaking.ClaimFailed(alice, address(rstk), owed);
+        vm.prank(alice);
+        staking.claimAll();
+        assertGt(zec.balanceOf(alice), 0); // ZEC still paid
+        assertEq(rstk.balanceOf(alice), 0);
+        assertEq(staking.earned(alice, address(rstk)), owed); // kept, not lost
+
+        rstk.setBlocked(alice, false);
+        vm.prank(alice);
+        staking.claimAll();
+        assertEq(rstk.balanceOf(alice), owed);
+        assertEq(staking.totalClaimed(address(rstk), alice), owed);
+    }
+
+    function test_recoverStrayTokensButNeverStakeOrRewards() public {
+        MockToken stray = new MockToken("STRAY", 18);
+        stray.mint(address(staking), 5e18);
+        vm.prank(admin);
+        staking.recoverERC20(address(stray), admin, 5e18);
+        assertEq(stray.balanceOf(admin), 5e18);
+
+        _stake(alice, 1e18);
+        vm.startPrank(admin);
+        vm.expectRevert(abi.encodeWithSelector(NomaStaking.CannotRecover.selector, address(noma)));
+        staking.recoverERC20(address(noma), admin, 1e18);
+        vm.expectRevert(abi.encodeWithSelector(NomaStaking.CannotRecover.selector, address(zec)));
+        staking.recoverERC20(address(zec), admin, 1);
+        vm.stopPrank();
+
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, executor, staking.ADMIN_ROLE()));
+        vm.prank(executor);
+        staking.recoverERC20(address(stray), executor, 0);
+    }
+
+    /// Invariant under random actions: the contract always holds at least every staked and
+    /// pending token, and at least every accrued-but-unclaimed reward.
+    function testFuzz_solvencyUnderRandomActions(uint256 seed) public {
+        address[3] memory users = [alice, bob, makeAddr("carol")];
+        noma.mint(users[2], 1_000_000e18);
+        vm.prank(users[2]);
+        noma.approve(address(staking), type(uint256).max);
+
+        for (uint256 i; i < 40; ++i) {
+            seed = uint256(keccak256(abi.encode(seed, i)));
+            address u = users[seed % 3];
+            uint256 action = (seed >> 8) % 6;
+            uint256 amt = bound(seed >> 16, 1, 1_000e18);
+            vm.startPrank(u);
+            if (action == 0) staking.stake(amt);
+            else if (action == 1 && staking.stakedOf(u) > 0) staking.requestUnstake(bound(amt, 1, staking.stakedOf(u)));
+            else if (action == 2) {
+                (uint128 p, uint64 unlockAt) = staking.pendingUnstake(u);
+                if (p > 0 && block.timestamp >= unlockAt) staking.withdraw();
+            } else if (action == 3) staking.claimAll();
+            vm.stopPrank();
+            if (action == 4) _notify(zec, bound(seed >> 32, 1, 1_000e8));
+            if (action == 5) _notify(nvda, bound(seed >> 32, 1, 1_000e18));
+            skip(bound(seed >> 64, 0, 3 days));
+
+            assertGe(noma.balanceOf(address(staking)), staking.totalStaked() + staking.totalPendingUnstake());
+            uint256 owedZec;
+            for (uint256 k; k < 3; ++k) owedZec += staking.earned(users[k], address(zec));
+            assertGe(zec.balanceOf(address(staking)), owedZec);
         }
     }
 }

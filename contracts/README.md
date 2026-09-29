@@ -23,3 +23,33 @@ Deployment order: NomaStaking(noma, admin, rewardEngineSafe, 604800, 604800) →
 each week before the cycle ends, `addRewardAsset(<stock token>)`.
 
 `test/mocks/MockPonsFeeEscrow.sol` is a test double used by the backend Safe integration test.
+
+## Deploy
+
+```bash
+STAKING_EXECUTOR=<reward engine Safe> [STAKING_ADMIN=<admin>] [NOMA_TOKEN=<$NOMA>] [ZEC_TOKEN=<zec>] \
+forge script script/DeployNomaStaking.s.sol --tc DeployNomaStaking --rpc-url <rpc> --private-key <key> --broadcast
+```
+
+Without `NOMA_TOKEN` (testnet) a mintable tNOMA is deployed; `DEPLOY_TEST_ZEC=true` adds a mintable tZEC.
+
+**EVM version.** Robinhood Chain mainnet supports Cancun opcodes used by solc (`PUSH0`, `MCOPY`,
+`TSTORE`/`TLOAD`; probed with `eth_call` on 2026-09-29); only `BLOBBASEFEE` is unsupported (unused).
+The default `evm_version = "cancun"` is therefore fine for mainnet.
+
+## Mainnet-fork rehearsal (no faucet, no cost)
+
+Anvil cannot fork Robinhood Chain with Cancun enabled (Arbitrum block headers carry no blob gas),
+so fork runs use Shanghai and a Shanghai build:
+
+```bash
+anvil --fork-url https://rpc.mainnet.chain.robinhood.com --chain-id 4663 --hardfork shanghai --port 58645
+FOUNDRY_EVM_VERSION=shanghai FOUNDRY_OUT=out-shanghai forge script ... --rpc-url http://127.0.0.1:58645 --broadcast
+# then, from ../backend:
+FORK_RPC=http://127.0.0.1:58645 SAFE=.. STAKING=.. NOMA=.. ZEC=.. npx tsx --env-file=.env scripts/fork-rehearsal.ts
+```
+
+Result on 2026-09-29 (fork of block ~75.5M): Safe 2-of-2 created through the canonical mainnet
+factory; the backend's safeTxHash matched the mainnet Safe contract; MultiSend approve +
+notifyReward executed (169k gas); stake 113k gas, claimAll 168k, requestUnstake 83k, withdraw 66k;
+withdraw before cooldown reverted; staker received the full 7-day stream.
