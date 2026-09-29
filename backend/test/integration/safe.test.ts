@@ -227,7 +227,8 @@ beforeAll(async () => {
   await send(deployer, noma, mintAbi, "mint", [staker.address, 100n * U]);
   await send(staker, noma, [{ type: "function", name: "approve", stateMutability: "nonpayable", inputs: [{ type: "address" }, { type: "uint256" }], outputs: [{ type: "bool" }] }], "approve", [STAKING.address, 100n * U]);
   await send(staker, STAKING.address, STAKING.abi, "stake", [100n * U]);
-  const now = Number((await anvil.getBlock()).timestamp);
+  // due is decided by Postgres now(); anvil may run weeks ahead after staking.test's time travel
+  const now = Math.min(Number((await anvil.getBlock()).timestamp), Math.floor(Date.now() / 1000));
   await mod.db.query(
     `INSERT INTO reward_cycles (week_no, stock_symbol, stock_token_address, starts_at, ends_at, status)
      VALUES (1, 'NVDA', $1, to_timestamp($2), to_timestamp($3), 'active')`,

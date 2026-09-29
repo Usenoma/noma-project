@@ -48,6 +48,7 @@ async function curveProtocolShare(): Promise<bigint> {
   return curveShareBps;
 }
 
+/** The pool is registered on the hook only at graduation; undefined before that. */
 async function hookLaunchInfo() {
   if (hookLaunch) return hookLaunch;
   const r = await chain().readContract({
@@ -57,7 +58,7 @@ async function hookLaunchInfo() {
     args: [config.NOMA_V4_POOL_ID as Hex],
   });
   const [registered, , memecoin, quoteToken, creator, , , , protocolFeeShareBps, , , , buybackEnabled] = r;
-  if (!registered) throw new Error("NOMA_V4_POOL_ID is not registered on the Pons V2 hook");
+  if (!registered) return undefined;
   if (config.SAFE_ADDRESS && creator.toLowerCase() !== config.SAFE_ADDRESS.toLowerCase()) {
     logger.error({ creator, safe: config.SAFE_ADDRESS }, "ALERT Pons pool creator fee recipient is not the Reward Engine Safe");
   }
@@ -137,7 +138,7 @@ export async function indexRewards(): Promise<void> {
     }
   }
   if (hookLogs.length) {
-    const launch = await hookLaunchInfo();
+    const launch = (await hookLaunchInfo())!; // HookFeeCollected implies a registered pool
     for (const l of hookLogs) {
       const isQuote = l.args.currency!.toLowerCase() === launch.quoteToken.toLowerCase();
       accruals.push({
@@ -212,10 +213,10 @@ async function pendingInPons(): Promise<{ quote: bigint; memecoin: bigint }> {
     ]);
     quote += pendingCreatorPayout(fee, tax, share);
   }
-  if (config.PONS_V2_MEME_HOOK && config.NOMA_V4_POOL_ID) {
+  const launch = config.PONS_V2_MEME_HOOK && config.NOMA_V4_POOL_ID ? await hookLaunchInfo() : undefined;
+  if (launch) {
     const hook = config.PONS_V2_MEME_HOOK as Address;
     const poolId = config.NOMA_V4_POOL_ID as Hex;
-    const launch = await hookLaunchInfo();
     const read = (fn: "pendingFees" | "pendingCreatorTax", currency: Address) =>
       client.readContract({ address: hook, abi: ponsHookAbi, functionName: fn, args: [poolId, currency] });
     const [qFee, qTax, mFee, mTax] = await Promise.all([

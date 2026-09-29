@@ -73,5 +73,16 @@ from `CurveBuy` / `CurveSell` with block timestamps; indexed fees and taxes equa
 pending balances; the live pool counted the pending creator payout; a factory-owner recipient
 change raised the ALERT. The Safe swept the curve itself and claimed from the Fee Escrow in one
 MultiSend (158k gas): `FeesSwept.creatorAmount` and the ETH received by the Safe both equalled the
-predicted payout (0.7% base-fee share + 1% tax of volume). The V4 hook path (post-graduation) is
-not rehearsed yet.
+predicted payout (0.7% base-fee share + 1% tax of volume).
+
+Post-graduation (same run): a buy past the 4.2 ETH threshold auto-graduated the curve (its pending
+fees went to the escrow for the Safe); `createGraduatedPool` (806k gas) registered the V4 pool on
+the hook with the Safe as creator, under the pool id the backend derives. Swaps went through a
+test-only router (`test/mocks/V4SwapRouter.sol`, never for mainnet):
+- V4 sell, exact input → fee in ETH: indexed `HookFeeCollected` equals the hook's pending ETH; the
+  Safe swept the pool itself and claimed in one MultiSend (148k gas); `PoolFeesSwept.creatorAmount`
+  equalled the prediction.
+- V4 buy with exact ETH input → fee in the memecoin: indexed as memecoin (no USD); live pool shows
+  it as `pending_memecoin`; the Safe's sweep reverts (`InternalSwapRequiresOperator`) and is
+  skipped. Only the Pons fee sweep operator (impersonated here) can convert and sweep it; the
+  converted ETH was credited to the Safe in the escrow.
