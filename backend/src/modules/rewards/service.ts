@@ -1,6 +1,6 @@
 import { db } from "../../db/pool.js";
 import { redis } from "../../redis.js";
-import { currentMethodology } from "../distribution/methodology.js";
+import { stakingMethodology, totalStaked } from "../staking/service.js";
 
 /** Live pool values, written by reward-indexer on every trade. Raw quote-asset units + USD. */
 export interface LivePool {
@@ -38,9 +38,13 @@ export async function activeCycle(): Promise<ActiveCycle | undefined> {
 /** Only the active cycle's stock is ever returned; upcoming cycles are never exposed. */
 export async function currentRewards() {
   const cycle = await activeCycle();
-  if (!cycle) return { cycle: null };
-  const live = (await redis.hgetall(livePoolKey(cycle.id))) as Partial<LivePool>;
+  if (!cycle) return { cycle: null, total_staked: await totalStaked() };
+  const [live, staked] = await Promise.all([
+    redis.hgetall(livePoolKey(cycle.id)) as Promise<Partial<LivePool>>,
+    totalStaked(),
+  ]);
   return {
+    total_staked: staked,
     cycle: {
       week_no: cycle.week_no,
       stock_of_the_week: { symbol: cycle.stock_symbol, token_address: cycle.stock_token_address },
@@ -65,10 +69,10 @@ export async function rewardHistory() {
        COALESCE((SELECT json_agg(json_build_object('asset', a.asset, 'amount_in', a.amount_in,
          'amount_out', a.amount_out, 'usd_value', a.usd_value, 'tx_hash', a.tx_hash))
          FROM reward_acquisitions a WHERE a.cycle_id = c.id), '[]') AS acquisitions,
-       (SELECT COALESCE(sum(d.usd_value), 0) FROM distributions d
-         WHERE d.cycle_id = c.id AND d.status = 'confirmed') AS distributed_usd,
-       (SELECT count(DISTINCT d.address) FROM distributions d
-         WHERE d.cycle_id = c.id AND d.status = 'confirmed') AS recipients
+       COALESCE((SELECT json_agg(json_build_object('asset', n.asset, 'amount', n.amount,
+         'amount_usd', n.amount_usd, 'stream_end', n.stream_end, 'tx_hash', n.tx_hash))
+         FROM reward_notifications n WHERE n.cycle_id = c.id), '[]') AS streamed_to_stakers,
+       (SELECT count(DISTINCT e.address) FROM collection_entries e WHERE e.cycle_id = c.id) AS recipients
      FROM reward_cycles c
      WHERE c.status IN ('executing', 'distributed')
      ORDER BY c.week_no DESC`,
@@ -85,27 +89,12 @@ export async function rewardTransactions(limit = 100) {
        SELECT 'acquisition', c.week_no, a.asset, a.amount_out, a.usd_value, a.tx_hash, a.ts
          FROM reward_acquisitions a JOIN reward_cycles c ON c.id = a.cycle_id
        UNION ALL
-       SELECT 'distribution', c.week_no, d.asset, sum(d.amount), sum(d.usd_value), d.tx_hash, max(c.ends_at)
-         FROM distributions d JOIN reward_cycles c ON c.id = d.cycle_id
-         WHERE d.status = 'confirmed' GROUP BY c.week_no, d.asset, d.tx_hash
+       SELECT 'staking_reward', c.week_no, n.asset, n.amount, n.amount_usd, n.tx_hash, n.ts
+         FROM reward_notifications n LEFT JOIN reward_cycles c ON c.id = n.cycle_id
      ) t ORDER BY ts DESC LIMIT $1`,
     [limit],
   );
   return rows;
 }
 
-export function methodology() {
-  const m = currentMethodology();
-  return {
-    version: m.version,
-    kind: m.kind,
-    min_balance: m.minBalance.toString(),
-    excluded_addresses: m.excluded,
-    rules: [
-      "Balance is read at the snapshot block at cycle end.",
-      "Holders at or above the minimum balance are eligible.",
-      "Protocol addresses (Pons curve, V4 pool/hook, fee escrow, RewardVault) and listed addresses are excluded.",
-      "Each asset pool is split pro-rata by eligible balance; rounding dust rolls into the next cycle.",
-    ],
-  };
-}
+export const methodology = stakingMethodology;

@@ -3,7 +3,6 @@ import { HDKey, mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { decrypt, encrypt, generateOrderKey, hashOrderKey, verifyOrderKey } from "../src/lib/crypto.js";
 import { verifyWalletAuth, walletAuthMessage } from "../src/lib/walletAuth.js";
-import { allocateProRata } from "../src/modules/distribution/allocation.js";
 import { applyMarkup } from "../src/modules/catalog/pricing.js";
 import { usdToUnits } from "../src/modules/payments/units.js";
 import { cyclePool } from "../src/modules/rewards/poolMath.js";
@@ -36,23 +35,6 @@ describe("reward pool math", () => {
     expect(cyclePool(7n, 4n)).toEqual({ total: 11n, zec: 5n, stock: 6n });
     const p = cyclePool(10n ** 18n, 1n);
     expect(p.zec + p.stock).toBe(p.total);
-  });
-});
-
-describe("pro-rata allocation", () => {
-  it("never allocates more than the total and reports dust", () => {
-    const holders = [
-      { address: "a", balance: 1n },
-      { address: "b", balance: 1n },
-      { address: "c", balance: 1n },
-    ];
-    const { allocations, dust } = allocateProRata(100n, holders);
-    expect(allocations.map((a) => a.amount)).toEqual([33n, 33n, 33n]);
-    expect(dust).toBe(1n);
-  });
-
-  it("handles empty supply", () => {
-    expect(allocateProRata(100n, [])).toEqual({ allocations: [], dust: 100n });
   });
 });
 

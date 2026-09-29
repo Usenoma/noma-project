@@ -39,8 +39,9 @@ export async function getCursor(name: string): Promise<bigint | undefined> {
   return rows[0] ? BigInt(rows[0].block) : undefined;
 }
 
-export async function setCursor(name: string, block: bigint): Promise<void> {
-  await db.query(
+/** Pass the transaction client so the cursor commits (or rolls back) with the indexed rows. */
+export async function setCursor(name: string, block: bigint, q: Queryable = db): Promise<void> {
+  await q.query(
     `INSERT INTO indexer_cursors (name, block) VALUES ($1, $2)
      ON CONFLICT (name) DO UPDATE SET block = EXCLUDED.block, updated_at = now()`,
     [name, block.toString()],

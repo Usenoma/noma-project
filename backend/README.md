@@ -32,11 +32,13 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
 
 - **Order key** is returned once by `POST /orders`; only its sha256 is stored.
 - **Deposit addresses** are derived from `PAYMENT_XPUB`; the API never holds the payment private key.
-- **Fund-moving txs** (refunds, claims, swaps, distributions) go through `sendOnce`: signed tx + hash are
+- **Fund-moving txs** (refunds, escrow claims, swaps, staking reward notifications) go through `sendOnce`: signed tx + hash are
   written to `chain_txs` before broadcast, so a crashed job resumes without double-sending.
 - **Fulfillment** uses `idempotency_key = order id`; once a supplier order id is recorded, retries only poll.
 - **Stock of the Week**: only the `active` cycle is ever returned by the API.
-- **Distribution** computes snapshot + allocations every cycle; sending is gated by `AUTO_DISTRIBUTION_ENABLED`.
+- **Rewards are staking-based**: only $NOMA staked in NomaStaking (`../contracts`) earns. The executor streams
+  each cycle's ZEC + Stock Token into NomaStaking; stakers claim. Collection entries come from per-cycle
+  on-chain checkpoints (`earned + totalClaimed`), GENESIS = wallets staked during week 1.
 
 ## Suppliers
 

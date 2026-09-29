@@ -2,10 +2,12 @@ import { decodeEventLog, encodeFunctionData, zeroAddress, type Address, type Hex
 import { config } from "../../config.js";
 import { executorWallet } from "../../chain/client.js";
 import { sendOnce } from "../../chain/sendOnce.js";
-import { rewardVaultAbi } from "../../chain/abis/index.js";
+import { chain } from "../../chain/client.js";
+import { nomaStakingAbi, rewardVaultAbi } from "../../chain/abis/index.js";
 import { db } from "../../db/pool.js";
 import { logger } from "../../lib/logger.js";
-import { QUEUE, queue } from "../../queues.js";
+import { usdPrice, type PayAsset } from "../payments/assets.js";
+import { checkpointCycle, recordGenesis } from "../staking/service.js";
 import { cyclePool } from "./poolMath.js";
 
 const vault = () => config.REWARD_VAULT_ADDRESS as Address;
@@ -22,7 +24,19 @@ async function quoteSwap(_tokenIn: Address, _tokenOut: Address, _amountIn: bigin
 
 const vaultCall = (purpose: string, data: Hex) => sendOnce(purpose, executorWallet(), { to: vault(), data });
 
-/** Close the active cycle whose end time has passed: claim escrow → swap 50/50 → hand off to distributor. */
+/** USD value of a raw quote-asset amount (18 decimals), or null without a price. */
+async function quoteUsd(raw: bigint): Promise<string | null> {
+  try {
+    return ((Number(raw) / 1e18) * (await usdPrice(config.NOMA_QUOTE_ASSET as PayAsset))).toFixed(6);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Close the active cycle whose end time has passed:
+ * checkpoint the ended stream → claim escrow → swap 50/50 → stream both assets into NomaStaking.
+ */
 export async function executeDueCycle(): Promise<void> {
   const { rows } = await db.query<{ id: number; week_no: number; stock_token_address: string | null }>(
     `UPDATE reward_cycles SET status = 'executing'
@@ -45,6 +59,12 @@ export async function runExecutor(cycleId: number): Promise<void> {
   const stockToken = rows[0].stock_token_address as Address | null;
   if (!config.ZEC_TOKEN_ADDRESS) throw new Error("ZEC_TOKEN_ADDRESS not configured");
   if (!stockToken) throw new Error(`cycle ${cycleId} has no stock token address`);
+
+  // 0. record what each staker received from the stream that just ended (collection entries),
+  //    before this cycle's notification folds any remainder into a new stream
+  await checkpointCycle(cycleId);
+  const genesis = await recordGenesis(cycleId);
+  if (genesis) logger.info({ cycleId, genesis }, "GENESIS stakers recorded");
 
   // 1. claim from Pons Fee Escrow into RewardVault
   const claimedBefore = await db.query("SELECT 1 FROM escrow_claims WHERE cycle_id = $1", [cycleId]);
@@ -107,5 +127,47 @@ export async function runExecutor(cycleId: number): Promise<void> {
     );
   }
 
-  await queue(QUEUE.distributor).add("distribute", { cycleId }, { jobId: `distribute-${cycleId}` });
+  // 3. RewardVault approves NomaStaking and calls notifyReward: streamed to stakers over 7 days
+  const { rows: acquired } = await db.query<{ asset: "ZEC" | "STOCK"; amount_in: string; amount_out: string; stock_symbol: string }>(
+    `SELECT a.asset, a.amount_in, a.amount_out, c.stock_symbol FROM reward_acquisitions a
+     JOIN reward_cycles c ON c.id = a.cycle_id WHERE a.cycle_id = $1`,
+    [cycleId],
+  );
+  for (const a of acquired) {
+    const token = (a.asset === "ZEC" ? config.ZEC_TOKEN_ADDRESS! : stockToken).toLowerCase() as Address;
+    const amount = BigInt(a.amount_out);
+    if (amount === 0n) continue;
+    const funded = await db.query("SELECT 1 FROM reward_notifications WHERE cycle_id = $1 AND asset_address = $2", [cycleId, token]);
+    if (funded.rowCount) continue;
+
+    const [listed] = await chain().readContract({
+      address: config.NOMA_STAKING_ADDRESS as Address,
+      abi: nomaStakingAbi,
+      functionName: "rewardState",
+      args: [token],
+    });
+    if (!listed) throw new Error(`${a.asset} token ${token} is not a NomaStaking reward asset: ADMIN must call addRewardAsset`);
+
+    const receipt = await vaultCall(
+      `fund:${cycleId}:${a.asset}`,
+      encodeFunctionData({ abi: rewardVaultAbi, functionName: "fundStaking", args: [token, amount] }),
+    );
+    await db.query(
+      `INSERT INTO reward_notifications (cycle_id, asset, asset_address, amount, amount_usd, stream_end, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6), $7)
+       ON CONFLICT (tx_hash, asset_address) DO UPDATE SET cycle_id = EXCLUDED.cycle_id, amount_usd = EXCLUDED.amount_usd`,
+      [
+        cycleId,
+        a.asset === "ZEC" ? "ZEC" : a.stock_symbol,
+        token,
+        amount.toString(),
+        await quoteUsd(BigInt(a.amount_in)),
+        config.REWARD_STREAM_DURATION,
+        receipt.transactionHash,
+      ],
+    );
+  }
+
+  await db.query("UPDATE reward_cycles SET status = 'distributed' WHERE id = $1", [cycleId]);
+  logger.info({ cycleId }, "cycle rewards streaming to stakers");
 }

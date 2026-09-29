@@ -1,7 +1,7 @@
 import { zeroAddress, type Address, type Hex } from "viem";
 import { config } from "../../config.js";
 import { chain } from "../../chain/client.js";
-import { erc20Abi, ponsCurveAbi, ponsFeeEscrowAbi, ponsHookAbi } from "../../chain/abis/index.js";
+import { ponsCurveAbi, ponsFeeEscrowAbi, ponsHookAbi } from "../../chain/abis/index.js";
 import { db, getCursor, setCursor, tx } from "../../db/pool.js";
 import { logger } from "../../lib/logger.js";
 import { redis } from "../../redis.js";
@@ -37,11 +37,11 @@ interface Accrual {
 }
 
 /**
- * Indexes one block range: $NOMA Transfer events (holder balances) and Pons trade events
- * (creator-tax accruals), then refreshes the live pool for the public Reward Engine page.
+ * Indexes one block range of Pons trade events (creator-tax accruals), then refreshes the live
+ * pool for the public Reward Engine page. Staking positions are indexed by staking/indexer.ts.
  */
 export async function indexRewards(): Promise<void> {
-  if (!config.NOMA_TOKEN_ADDRESS) return;
+  if (!config.NOMA_BONDING_CURVE && !config.PONS_V2_MEME_HOOK) return;
   const client = chain();
   const head = await client.getBlockNumber();
   const cursor = (await getCursor(CURSOR)) ?? (config.REWARD_INDEXER_START_BLOCK ?? head) - 1n;
@@ -49,14 +49,7 @@ export async function indexRewards(): Promise<void> {
   if (fromBlock > head) return refreshLivePool();
   const toBlock = fromBlock + MAX_RANGE - 1n < head ? fromBlock + MAX_RANGE - 1n : head;
 
-  const [transfers, curveTrades, hookTrades] = await Promise.all([
-    client.getContractEvents({
-      address: config.NOMA_TOKEN_ADDRESS as Address,
-      abi: erc20Abi,
-      eventName: "Transfer",
-      fromBlock,
-      toBlock,
-    }),
+  const [curveTrades, hookTrades] = await Promise.all([
     config.NOMA_BONDING_CURVE
       ? client.getContractEvents({ address: config.NOMA_BONDING_CURVE as Address, abi: ponsCurveAbi, eventName: "Trade", fromBlock, toBlock })
       : Promise.resolve([]),
@@ -99,23 +92,6 @@ export async function indexRewards(): Promise<void> {
   const now = new Date();
 
   await tx(async (q) => {
-    // net balance deltas per address for this range
-    const deltas = new Map<string, bigint>();
-    const bump = (a: string, d: bigint) => deltas.set(a, (deltas.get(a) ?? 0n) + d);
-    for (const t of transfers) {
-      const { from, to, value } = t.args;
-      if (from && from !== zeroAddress) bump(from.toLowerCase(), -value!);
-      if (to && to !== zeroAddress) bump(to.toLowerCase(), value!);
-    }
-    for (const [address, delta] of deltas) {
-      await q.query(
-        `INSERT INTO noma_balances (address, balance, updated_block) VALUES ($1, $2, $3)
-         ON CONFLICT (address) DO UPDATE SET balance = noma_balances.balance + EXCLUDED.balance,
-           updated_block = EXCLUDED.updated_block`,
-        [address, delta.toString(), toBlock.toString()],
-      );
-    }
-
     for (const a of accruals) {
       // TODO: split creator-tax vs. creator's base-fee share once Pons event fields are confirmed (open decision #1)
       await q.query(
@@ -139,12 +115,10 @@ export async function indexRewards(): Promise<void> {
         ],
       );
     }
-    await setCursor(CURSOR, toBlock);
+    await setCursor(CURSOR, toBlock, q);
   });
 
-  if (accruals.length || transfers.length) {
-    logger.info({ fromBlock, toBlock, trades: accruals.length, transfers: transfers.length }, "reward-indexer range indexed");
-  }
+  if (accruals.length) logger.info({ fromBlock, toBlock, trades: accruals.length }, "reward-indexer range indexed");
   await refreshLivePool();
 }
 

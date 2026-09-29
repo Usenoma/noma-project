@@ -38,20 +38,11 @@ const schema = z.object({
   EXECUTOR_PRIVATE_KEY: optionalString,
   REFUND_PRIVATE_KEY: optionalString,
 
-  AUTO_DISTRIBUTION_ENABLED: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((v) => v === "true"),
-  ELIGIBILITY_MIN_BALANCE: z.coerce.bigint().default(0n),
-  ELIGIBILITY_EXCLUDED_ADDRESSES: z
-    .string()
-    .default("")
-    .transform((v) =>
-      v
-        .split(",")
-        .map((a) => a.trim().toLowerCase())
-        .filter(Boolean),
-    ),
+  // NomaStaking: only staked $NOMA is eligible for rewards. Durations (seconds) mirror the
+  // contract's immutables and are only used for display / methodology.
+  NOMA_STAKING_ADDRESS: optionalAddress,
+  UNSTAKE_COOLDOWN: z.coerce.number().int().positive().default(7 * 24 * 3600),
+  REWARD_STREAM_DURATION: z.coerce.number().int().positive().default(7 * 24 * 3600),
 
   ENCRYPTION_KEY: z.string().refine((v) => Buffer.from(v, "base64").length === 32, {
     message: "ENCRYPTION_KEY must be 32 bytes, base64-encoded",

@@ -3,14 +3,13 @@ import { chainConfigured } from "../chain/client.js";
 import { db } from "../db/pool.js";
 import { logger } from "../lib/logger.js";
 import { syncSupplierCatalog } from "../modules/catalog/service.js";
-import { writeCollectionForCycle } from "../modules/collection/service.js";
-import { distributeCycle } from "../modules/distribution/distributor.js";
 import { fulfill, markFulfillmentFailed, SupplierPendingError } from "../modules/fulfillment/service.js";
 import { refreshEthPrice } from "../modules/payments/priceFeed.js";
 import { watchPayments } from "../modules/payments/watcher.js";
 import { processRefund, startRefund, type RefundKind } from "../modules/refunds/service.js";
 import { executeDueCycle, runExecutor } from "../modules/rewards/executor.js";
 import { indexRewards } from "../modules/rewards/indexer.js";
+import { indexStaking } from "../modules/staking/indexer.js";
 import { closeQueues, QUEUE, queue, type QueueName } from "../queues.js";
 import { bullConnection, redis } from "../redis.js";
 import { adapter, adapters } from "../suppliers/registry.js";
@@ -74,11 +73,13 @@ const processors: Record<QueueName, Processor> = {
   [QUEUE.resourceExpiry]: releaseExpiredResources,
   [QUEUE.fulfillment]: (job: Job<{ orderId: string }>) => fulfill(job.data.orderId),
   [QUEUE.refund]: (job: Job<{ orderId: string; kind?: RefundKind }>) => processRefund(job.data.orderId, job.data.kind),
-  [QUEUE.rewardIndexer]: indexRewards,
+  // Pons trade accruals + NomaStaking positions/claims/notifications
+  [QUEUE.rewardIndexer]: async () => {
+    await indexStaking();
+    await indexRewards();
+  },
   [QUEUE.rewardExecutor]: async (job: Job<{ cycleId?: number }>) =>
     job.data.cycleId ? runExecutor(job.data.cycleId) : executeDueCycle(),
-  [QUEUE.distributor]: (job: Job<{ cycleId: number }>) => distributeCycle(job.data.cycleId),
-  [QUEUE.collection]: (job: Job<{ cycleId: number }>) => writeCollectionForCycle(db, job.data.cycleId),
 };
 
 /** Repeatable schedules (backend.md §10). Chain workers only run once the chain is configured. */

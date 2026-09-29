@@ -3,6 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 docker compose up -d >/dev/null
+# compile contracts (NomaStaking artifact is deployed by the staking integration test)
+( cd ../contracts && [ -d node_modules ] || npm install --no-audit --no-fund >/dev/null
+  mkdir -p "$HOME/.svm-cache"
+  docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$HOME/.svm-cache:/tmp/.svm" -v "$PWD:/w" -w /w     ghcr.io/foundry-rs/foundry:latest "forge build" >/dev/null )
 docker compose exec -T postgres psql -U noma -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='noma_test'" </dev/null | grep -q 1 \
   || docker compose exec -T postgres psql -U noma -d postgres -qc "CREATE DATABASE noma_test" </dev/null
 docker rm -f noma-anvil >/dev/null 2>&1 || true

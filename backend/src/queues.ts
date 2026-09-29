@@ -11,8 +11,6 @@ export const QUEUE = {
   supplierBalance: "supplier-balance-monitor",
   rewardIndexer: "reward-indexer",
   rewardExecutor: "reward-executor",
-  distributor: "distributor",
-  collection: "collection",
 } as const;
 
 export type QueueName = (typeof QUEUE)[keyof typeof QUEUE];
@@ -29,8 +27,6 @@ const DEFAULT_JOB_OPTIONS: Partial<Record<QueueName, DefaultJobOptions>> = {
   [QUEUE.fulfillment]: retry(5, 30_000),
   [QUEUE.refund]: retry(10, 60_000),
   [QUEUE.rewardExecutor]: retry(5, 60_000),
-  [QUEUE.distributor]: retry(10, 60_000),
-  [QUEUE.collection]: retry(5, 10_000),
 };
 
 const POLLER_OPTIONS: DefaultJobOptions = { removeOnComplete: 100, removeOnFail: 1000 };
