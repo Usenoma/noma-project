@@ -8,7 +8,7 @@ import { syncSupplierCatalog } from "../modules/catalog/service.js";
 import { fulfill, markFulfillmentFailed, SupplierPendingError } from "../modules/fulfillment/service.js";
 import { refreshEthPrice } from "../modules/payments/priceFeed.js";
 import { watchPayments } from "../modules/payments/watcher.js";
-import { checkHealth, markRun } from "../modules/health/monitor.js";
+import { checkHealth, markRun, workersHeartbeat } from "../modules/health/monitor.js";
 import { processRefund, startRefund, type RefundKind } from "../modules/refunds/service.js";
 import { advanceCycle, executeDueCycle } from "../modules/rewards/executor.js";
 import { indexRewards } from "../modules/rewards/indexer.js";
@@ -139,8 +139,11 @@ async function main() {
   });
 
   logger.info({ workers: workers.map((w) => w.name) }, "workers started");
+  await workersHeartbeat();
+  const heartbeat = setInterval(() => void workersHeartbeat(), 30_000);
 
   const shutdown = async () => {
+    clearInterval(heartbeat);
     await Promise.all(workers.map((w) => w.close()));
     await closeQueues();
     await db.end();

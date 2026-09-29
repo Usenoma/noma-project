@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { config } from "../config.js";
 import { HttpError } from "../lib/errors.js";
+import { readiness } from "../modules/health/monitor.js";
 import { rateLimitRedis } from "../redis.js";
 import { adminRoutes } from "./routes/admin.js";
 import { agentRoutes } from "./routes/agent.js";
@@ -32,7 +33,12 @@ export function buildServer(): FastifyInstance {
   // per-IP limits, shared across API instances via Redis; tighter on routes that cost money
   app.register(rateLimit, { global: true, max: 120, timeWindow: "1 minute", redis: rateLimitRedis() });
 
+  // liveness (container healthcheck) and readiness (external uptime monitoring: DB, Redis, workers)
   app.get("/health", { config: { rateLimit: false } }, async () => ({ ok: true }));
+  app.get("/ready", { config: { rateLimit: false } }, async (_req, reply) => {
+    const r = await readiness();
+    return reply.status(r.ok ? 200 : 503).send(r);
+  });
 
   app.register(catalogRoutes);
   app.register(orderRoutes);

@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 *.log
+deploy/*.env
+deploy/backups*/

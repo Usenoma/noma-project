@@ -1,0 +1,21 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Automatic HTTPS (Let's Encrypt) for DOMAIN; HTTP redirects to HTTPS.
+{$DOMAIN} {
+	encode zstd gzip
+	# /admin always needs ADMIN_TOKEN; ADMIN_ALLOW_CIDR additionally limits who reaches it
+	@admin_blocked {
+		path /admin /admin/*
+		not remote_ip {$ADMIN_ALLOW_CIDR:0.0.0.0/0 ::/0}
+	}
+	respond @admin_blocked 404
+	reverse_proxy api:3000
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}

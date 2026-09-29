@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { chain, chainConfigured } from "../../chain/client.js";
 import { db } from "../../db/pool.js";
 import { alert } from "../../lib/alerts.js";
@@ -82,4 +83,44 @@ export async function checkHealth(): Promise<void> {
       { key: "fulfillment-failure-rate", cooldownSeconds: 2 * 3600 },
     );
   }
+}
+
+// ─── liveness / readiness ─────────────────────────────────────────────────
+
+const WORKERS_HEARTBEAT_KEY = "health:workers-heartbeat";
+/** Touched by long-running processes; the Docker healthcheck compares its mtime to the clock. */
+export const HEARTBEAT_FILE = "/tmp/noma-heartbeat";
+const HEARTBEAT_MAX_AGE_MS = 2 * 60_000;
+
+export async function touchHeartbeatFile(): Promise<void> {
+  await writeFile(HEARTBEAT_FILE, String(Date.now())).catch(() => undefined);
+}
+
+/** Workers heartbeat: file (container healthcheck) + Redis (API /ready, seen by uptime monitoring). */
+export async function workersHeartbeat(): Promise<void> {
+  await touchHeartbeatFile();
+  await redis.set(WORKERS_HEARTBEAT_KEY, String(Date.now())).catch(() => undefined);
+}
+
+const withTimeout = <T>(p: Promise<T>, ms: number) =>
+  Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))]);
+
+/** Readiness for external uptime monitoring: DB, Redis, and a recent workers heartbeat. */
+export async function readiness(): Promise<{ ok: boolean; checks: Record<string, string> }> {
+  const checks: Record<string, string> = {};
+  await Promise.all([
+    withTimeout(db.query("SELECT 1"), 2000)
+      .then(() => (checks.db = "ok"))
+      .catch((e) => (checks.db = String(e.message ?? e))),
+    withTimeout(redis.ping(), 2000)
+      .then(() => (checks.redis = "ok"))
+      .catch((e) => (checks.redis = String(e.message ?? e))),
+    withTimeout(redis.get(WORKERS_HEARTBEAT_KEY), 2000)
+      .then((v) => {
+        const age = v ? Date.now() - Number(v) : Infinity;
+        checks.workers = age <= HEARTBEAT_MAX_AGE_MS ? "ok" : v ? `heartbeat ${Math.round(age / 1000)}s old` : "no heartbeat";
+      })
+      .catch((e) => (checks.workers = String(e.message ?? e))),
+  ]);
+  return { ok: Object.values(checks).every((c) => c === "ok"), checks };
 }

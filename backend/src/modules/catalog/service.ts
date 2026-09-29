@@ -1,4 +1,5 @@
 import { db, getSetting } from "../../db/pool.js";
+import { logger } from "../../lib/logger.js";
 import type { Category, NormalizedProduct, RequiredField, SupplierAdapter } from "../../suppliers/types.js";
 import { applyMarkup, type MarkupConfig } from "./pricing.js";
 
@@ -74,7 +75,15 @@ export async function getProducts(ids: string[]): Promise<Product[]> {
 }
 
 /** Upsert a supplier's normalized catalog and deactivate SKUs the supplier no longer lists. */
-export async function syncSupplierCatalog(adapter: SupplierAdapter, products: NormalizedProduct[]): Promise<number> {
+export async function syncSupplierCatalog(adapter: SupplierAdapter, listed: NormalizedProduct[]): Promise<number> {
+  // a SKU listed twice (overlapping API pages, repeated packages) would make the batched upsert
+  // touch the same row twice, which Postgres rejects for the whole chunk: keep the first listing
+  const bySku = new Map<string, NormalizedProduct>();
+  for (const p of listed) if (!bySku.has(p.supplierSku)) bySku.set(p.supplierSku, p);
+  const products = [...bySku.values()];
+  if (products.length < listed.length) {
+    logger.warn({ supplier: adapter.id, duplicates: listed.length - products.length }, "duplicate SKUs in supplier catalog ignored");
+  }
   const markup = (await getSetting<MarkupConfig>("markup_pct")) ?? { default: 0.08 };
   await db.query(
     `INSERT INTO suppliers (id, name, category) VALUES ($1, $2, $3)

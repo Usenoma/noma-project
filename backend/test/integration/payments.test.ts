@@ -76,6 +76,17 @@ afterAll(async () => {
   redis.disconnect();
 });
 
+describe("catalog sync", () => {
+  it("ignores a SKU the supplier lists twice instead of failing the whole batch", async () => {
+    const mock = createMockEsimAdapter();
+    const listed = await mock.syncCatalog();
+    const n = await syncSupplierCatalog(mock, [...listed, { ...listed[0]!, title: "duplicate listing" }]);
+    expect(n).toBe(listed.length);
+    const { rows } = await db.query("SELECT title FROM products WHERE supplier_id = 'mock-esim' AND supplier_sku = $1", [listed[0]!.supplierSku]);
+    expect(rows).toEqual([{ title: listed[0]!.title }]);
+  });
+});
+
 describe("payment watcher on a real chain", () => {
   it("exact payment → paid → fulfilled", async () => {
     const o = await newOrder();

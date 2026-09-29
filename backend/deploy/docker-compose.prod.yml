@@ -1,0 +1,101 @@
+# Production stack. Run from this directory:
+#   docker compose -f docker-compose.prod.yml --env-file compose.env up -d --build
+# compose.env holds the compose-level values (DOMAIN, POSTGRES_PASSWORD, ...);
+# noma.env holds the application settings (see ../.env.example). The sweeper has its own
+# sweeper.env with PAYMENT_XPRV and only runs with --profile sweeper (ideally on another host).
+name: noma-prod
+
+x-backend: &backend
+  build: { context: .., dockerfile: Dockerfile }
+  image: noma-backend:${NOMA_VERSION:-latest}
+  env_file: [noma.env]
+  environment:
+    NODE_ENV: production
+    PORT: "3000" # Caddy proxies to api:3000, whatever noma.env says
+    DATABASE_URL: postgres://noma:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/noma
+    REDIS_URL: redis://redis:6379
+  restart: unless-stopped
+  logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+    migrate: { condition: service_completed_successfully }
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: noma
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: noma
+    volumes: [pg-data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "noma"], interval: 10s, retries: 10 }
+    restart: unless-stopped
+    # no published port: only reachable on the compose network
+
+  redis:
+    image: redis:7-alpine
+    # BullMQ queues, live pool, alert cooldowns: keep them across restarts
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redis-data:/data]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, retries: 10 }
+    restart: unless-stopped
+
+  migrate:
+    <<: *backend
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *backend
+    command: ["api"]
+    expose: ["3000"]
+    healthcheck: { test: ["CMD", "noma", "healthcheck-api"], interval: 30s, timeout: 5s, retries: 3 }
+
+  workers:
+    <<: *backend
+    command: ["workers"]
+    healthcheck: { test: ["CMD", "noma", "healthcheck-heartbeat", "120"], interval: 30s, timeout: 5s, retries: 3 }
+
+  sweeper:
+    <<: *backend
+    profiles: [sweeper]
+    env_file: [noma.env, sweeper.env]
+    command: ["sweeper"]
+    healthcheck: { test: ["CMD", "noma", "healthcheck-heartbeat", "900"], interval: 60s, timeout: 5s, retries: 3 }
+
+  caddy:
+    image: caddy:2.8-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      ADMIN_ALLOW_CIDR: ${ADMIN_ALLOW_CIDR:-0.0.0.0/0 ::/0}
+    ports: ["${HTTP_PORT:-80}:80", "${HTTPS_PORT:-443}:443"]
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro, caddy-data:/data, caddy-config:/config]
+    depends_on: [api]
+    restart: unless-stopped
+
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: noma
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      PGDATABASE: noma
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["sh", "/backup.sh"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  redis-data:
+  caddy-data:
+  caddy-config:
