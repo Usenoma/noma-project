@@ -6,13 +6,14 @@ import { syncSupplierCatalog } from "../modules/catalog/service.js";
 import { writeCollectionForCycle } from "../modules/collection/service.js";
 import { distributeCycle } from "../modules/distribution/distributor.js";
 import { fulfill, markFulfillmentFailed, SupplierPendingError } from "../modules/fulfillment/service.js";
+import { refreshEthPrice } from "../modules/payments/priceFeed.js";
 import { watchPayments } from "../modules/payments/watcher.js";
-import { processRefund, startRefund } from "../modules/refunds/service.js";
+import { processRefund, startRefund, type RefundKind } from "../modules/refunds/service.js";
 import { executeDueCycle, runExecutor } from "../modules/rewards/executor.js";
 import { indexRewards } from "../modules/rewards/indexer.js";
 import { closeQueues, QUEUE, queue, type QueueName } from "../queues.js";
 import { bullConnection, redis } from "../redis.js";
-import { adapters } from "../suppliers/registry.js";
+import { adapter, adapters } from "../suppliers/registry.js";
 
 async function supplierBalances() {
   for (const a of adapters()) {
@@ -35,10 +36,32 @@ async function supplierBalances() {
 async function catalogSync() {
   for (const a of adapters()) {
     try {
+      // suppliers with tight API quotas (e.g. Bitrefill) sync less often
+      if (a.catalogTtlMinutes) {
+        const fresh = await redis.set(`catalog-sync:${a.id}`, "1", "EX", a.catalogTtlMinutes * 60, "NX");
+        if (!fresh) continue;
+      }
       const count = await syncSupplierCatalog(a, await a.syncCatalog());
       logger.info({ supplier: a.id, count }, "catalog synced");
     } catch (err) {
       logger.error({ err, supplier: a.id }, "catalog sync failed");
+      if (a.catalogTtlMinutes) await redis.del(`catalog-sync:${a.id}`); // retry on the next tick
+    }
+  }
+}
+
+/** Release rentals (e.g. VPS) whose period has ended. */
+async function releaseExpiredResources() {
+  const { rows } = await db.query<{ order_id: string; supplier_id: string; supplier_order_id: string }>(
+    "SELECT order_id, supplier_id, supplier_order_id FROM supplier_resources WHERE released_at IS NULL AND expires_at <= now() LIMIT 50",
+  );
+  for (const r of rows) {
+    try {
+      await adapter(r.supplier_id).release?.(r.supplier_order_id);
+      await db.query("UPDATE supplier_resources SET released_at = now() WHERE order_id = $1", [r.order_id]);
+      logger.info({ orderId: r.order_id, supplier: r.supplier_id }, "rental released");
+    } catch (err) {
+      logger.error({ err: String(err), orderId: r.order_id }, "ALERT rental release failed (still billing)");
     }
   }
 }
@@ -47,8 +70,10 @@ const processors: Record<QueueName, Processor> = {
   [QUEUE.catalogSync]: catalogSync,
   [QUEUE.supplierBalance]: supplierBalances,
   [QUEUE.paymentWatcher]: watchPayments,
+  [QUEUE.priceFeed]: refreshEthPrice,
+  [QUEUE.resourceExpiry]: releaseExpiredResources,
   [QUEUE.fulfillment]: (job: Job<{ orderId: string }>) => fulfill(job.data.orderId),
-  [QUEUE.refund]: (job: Job<{ orderId: string }>) => processRefund(job.data.orderId),
+  [QUEUE.refund]: (job: Job<{ orderId: string; kind?: RefundKind }>) => processRefund(job.data.orderId, job.data.kind),
   [QUEUE.rewardIndexer]: indexRewards,
   [QUEUE.rewardExecutor]: async (job: Job<{ cycleId?: number }>) =>
     job.data.cycleId ? runExecutor(job.data.cycleId) : executeDueCycle(),
@@ -60,6 +85,8 @@ const processors: Record<QueueName, Processor> = {
 const schedules: { queue: QueueName; everyMs: number; needsChain?: boolean }[] = [
   { queue: QUEUE.catalogSync, everyMs: 30 * 60_000 },
   { queue: QUEUE.supplierBalance, everyMs: 5 * 60_000 },
+  { queue: QUEUE.priceFeed, everyMs: 30_000 },
+  { queue: QUEUE.resourceExpiry, everyMs: 10 * 60_000 },
   { queue: QUEUE.paymentWatcher, everyMs: 10_000, needsChain: true },
   { queue: QUEUE.rewardIndexer, everyMs: 5_000, needsChain: true },
   { queue: QUEUE.rewardExecutor, everyMs: 60_000, needsChain: true },

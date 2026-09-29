@@ -9,6 +9,8 @@ import { usdToUnits } from "../src/modules/payments/units.js";
 import { cyclePool } from "../src/modules/rewards/poolMath.js";
 import { allowedFrom, canTransition } from "../src/modules/orders/status.js";
 import { depositAddress } from "../src/chain/depositAddress.js";
+import { combineQuotes } from "../src/modules/payments/priceFeed.js";
+import { pickRequiredFields } from "../src/modules/orders/service.js";
 
 describe("crypto", () => {
   const key = Buffer.alloc(32, 1);
@@ -58,7 +60,7 @@ describe("order status", () => {
   it("enforces the lifecycle", () => {
     expect(canTransition("awaiting_payment", "paid")).toBe(true);
     expect(canTransition("delivered", "refunding")).toBe(false);
-    expect(allowedFrom("refunding")).toEqual(["failed"]);
+    expect(allowedFrom("refunding")).toEqual(["expired", "failed"]);
   });
 });
 
@@ -93,5 +95,23 @@ describe("wallet auth", () => {
     expect(await verifyWalletAuth(account.address, signature, String(now), now + 10 * 60_000)).toBeNull();
     const other = privateKeyToAccount(`0x${"22".repeat(32)}`).address;
     expect(await verifyWalletAuth(other, signature, String(now), now)).toBeNull();
+  });
+});
+
+describe("ETH price aggregation", () => {
+  it("needs two agreeing sources", () => {
+    expect(combineQuotes([3000, 3010])).toBe(3005);
+    expect(combineQuotes([3000])).toBeNull();
+    expect(combineQuotes([3000, 3200])).toBeNull(); // >2% apart
+    expect(combineQuotes([3000, NaN, 3001, 2999])).toBe(3000);
+  });
+});
+
+describe("required fields", () => {
+  const os = { name: "os", label: "OS", type: "select" as const, options: [{ value: "10000", label: "Ubuntu 24.04" }] };
+  it("keeps only declared fields and validates selects", () => {
+    expect(pickRequiredFields([os], { os: "10000", extra: "x" })).toEqual({ os: "10000" });
+    expect(() => pickRequiredFields([os], { os: "rm -rf" })).toThrow(/invalid option/);
+    expect(() => pickRequiredFields([os], {})).toThrow(/missing field/);
   });
 });

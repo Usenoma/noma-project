@@ -13,15 +13,30 @@ interface FulfillmentContext {
   supplier_sku: string;
   customer_fields: string | null;
   status: string;
+  duration_days: string | null;
 }
 
-async function storeDeliverable(orderId: string, deliverable: Deliverable) {
+/** Time-limited resource (e.g. VPS rental) to be released by the expiry job. */
+interface Lifetime {
+  supplierId: string;
+  supplierOrderId: string;
+  days: number;
+}
+
+async function storeDeliverable(orderId: string, deliverable: Deliverable, lifetime?: Lifetime) {
   await tx(async (client) => {
     await client.query("INSERT INTO deliverables (order_id, type, payload_encrypted) VALUES ($1, $2, $3) ON CONFLICT (order_id) DO NOTHING", [
       orderId,
       deliverable.type,
       encryptJson(deliverable.payload, encryptionKey),
     ]);
+    if (lifetime) {
+      await client.query(
+        `INSERT INTO supplier_resources (order_id, supplier_id, supplier_order_id, expires_at)
+         VALUES ($1, $2, $3, now() + make_interval(days => $4)) ON CONFLICT (order_id) DO NOTHING`,
+        [orderId, lifetime.supplierId, lifetime.supplierOrderId, lifetime.days],
+      );
+    }
     await client.query("UPDATE fulfillments SET status = 'done', updated_at = now() WHERE order_id = $1", [orderId]);
     await transition(client, orderId, "delivered");
   });
@@ -50,7 +65,7 @@ export async function fulfill(orderId: string): Promise<void> {
 
 async function fulfillLocked(orderId: string): Promise<void> {
   const { rows } = await db.query<FulfillmentContext>(
-    `SELECT p.supplier_id, p.supplier_sku, o.customer_fields, o.status
+    `SELECT p.supplier_id, p.supplier_sku, o.customer_fields, o.status, p.specs ->> 'duration_days' AS duration_days
      FROM orders o JOIN products p ON p.id = o.product_id WHERE o.id = $1`,
     [orderId],
   );
@@ -72,6 +87,11 @@ async function fulfillLocked(orderId: string): Promise<void> {
     [orderId],
   );
 
+  const lifetimeFor = (supplierOrderId: string): Lifetime | undefined =>
+    ctx.duration_days && supplier.release
+      ? { supplierId: supplier.id, supplierOrderId, days: Number(ctx.duration_days) }
+      : undefined;
+
   let supplierOrderId = f[0]!.supplier_order_id;
   if (!supplierOrderId) {
     const res = await supplier.purchase(ctx.supplier_sku, fields, orderId);
@@ -81,13 +101,13 @@ async function fulfillLocked(orderId: string): Promise<void> {
       supplierOrderId,
     ]);
     logger.info({ orderId, supplier: supplier.id, supplierOrderId }, "supplier purchase placed");
-    if (res.deliverable) return storeDeliverable(orderId, res.deliverable);
+    if (res.deliverable) return storeDeliverable(orderId, res.deliverable, lifetimeFor(supplierOrderId));
   }
 
   const status = await supplier.status(supplierOrderId);
   if (status === "pending") throw new SupplierPendingError(`supplier order ${supplierOrderId} pending`);
   if (status === "failed") throw new Error(`supplier order ${supplierOrderId} failed`);
-  await storeDeliverable(orderId, await supplier.deliverable(supplierOrderId));
+  await storeDeliverable(orderId, await supplier.deliverable(supplierOrderId), lifetimeFor(supplierOrderId));
 }
 
 /** Called when the fulfillment job has exhausted its retries. */

@@ -8,7 +8,8 @@ const body = z.object({
 });
 
 export async function agentRoutes(app: FastifyInstance) {
-  app.post("/agent/chat", async (req) => {
+  // each call costs LLM tokens
+  app.post("/agent/chat", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
     const { session_id, message } = body.parse(req.body);
     return chat(session_id, message);
   });

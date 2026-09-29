@@ -16,7 +16,8 @@ let publicClient: PublicClient | undefined;
 
 export function chain(): PublicClient {
   if (!chainConfigured) throw new Error("CHAIN_RPC_URL / CHAIN_ID not configured");
-  publicClient ??= createPublicClient({ chain: robinhoodChain, transport: http(config.CHAIN_RPC_URL) });
+  // cacheTime 0: watchers must read the current head, not a block number cached for seconds
+  publicClient ??= createPublicClient({ chain: robinhoodChain, transport: http(config.CHAIN_RPC_URL), cacheTime: 0 });
   return publicClient;
 }
 

@@ -8,7 +8,15 @@ import { QUEUE, queue } from "../../queues.js";
 import { assetInfo, type PayAsset } from "../payments/assets.js";
 import { transition } from "../orders/service.js";
 
-/** failed → refunding: record what we owe (everything received) and to whom (the payer), then enqueue. */
+export type RefundKind = "full" | "overpayment";
+
+const enqueue = (orderId: string, kind: RefundKind) =>
+  queue(QUEUE.refund).add("refund", { orderId, kind }, { jobId: `refund-${kind}-${orderId}` });
+
+/**
+ * failed | expired → refunding: refund everything received on the invoice to the payer.
+ * Throws (for an admin alert) when the payer is unknown or nothing was received.
+ */
 export async function startRefund(orderId: string): Promise<boolean> {
   const started = await tx(async (client) => {
     if (!(await transition(client, orderId, "refunding"))) return false;
@@ -20,25 +28,41 @@ export async function startRefund(orderId: string): Promise<boolean> {
     if (!inv?.payer_address || BigInt(inv.received) === 0n) {
       throw new Error(`order ${orderId}: no payer address / nothing received, refund needs manual handling`);
     }
+    // an overpayment already refunded is not refunded twice
+    const { rows: prior } = await client.query<{ amount: string }>(
+      "SELECT amount FROM refunds WHERE order_id = $1 AND kind = 'overpayment'",
+      [orderId],
+    );
+    const amount = BigInt(inv.received) - BigInt(prior[0]?.amount ?? 0);
     await client.query(
-      `INSERT INTO refunds (order_id, amount, asset, to_address) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (order_id) DO NOTHING`,
-      [orderId, inv.received, inv.asset, inv.payer_address],
+      `INSERT INTO refunds (order_id, kind, amount, asset, to_address) VALUES ($1, 'full', $2, $3, $4)
+       ON CONFLICT (order_id, kind) DO NOTHING`,
+      [orderId, amount.toString(), inv.asset, inv.payer_address],
     );
     return true;
   });
-  if (started) await queue(QUEUE.refund).add("refund", { orderId }, { jobId: `refund-${orderId}` });
+  if (started) await enqueue(orderId, "full");
   return started;
 }
 
-/** Sends the refund exactly once (see sendOnce) and marks the order refunded on confirmation. */
-export async function processRefund(orderId: string): Promise<void> {
+/** Refund the amount paid above the invoice. The order itself proceeds normally. */
+export async function startOverpaymentRefund(orderId: string, amount: bigint, asset: string, payer: string): Promise<void> {
+  const { rowCount } = await db.query(
+    `INSERT INTO refunds (order_id, kind, amount, asset, to_address) VALUES ($1, 'overpayment', $2, $3, $4)
+     ON CONFLICT (order_id, kind) DO NOTHING`,
+    [orderId, amount.toString(), asset, payer],
+  );
+  if (rowCount) await enqueue(orderId, "overpayment");
+}
+
+/** Sends the refund exactly once (see sendOnce). A full refund also closes the order as refunded. */
+export async function processRefund(orderId: string, kind: RefundKind = "full"): Promise<void> {
   const { rows } = await db.query<{ id: string; amount: string; asset: PayAsset; to_address: Address }>(
-    "SELECT id, amount, asset, to_address FROM refunds WHERE order_id = $1",
-    [orderId],
+    "SELECT id, amount, asset, to_address FROM refunds WHERE order_id = $1 AND kind = $2",
+    [orderId, kind],
   );
   const refund = rows[0];
-  if (!refund) throw new Error(`no refund row for order ${orderId}`);
+  if (!refund) throw new Error(`no ${kind} refund row for order ${orderId}`);
 
   const info = assetInfo(refund.asset);
   const amount = BigInt(refund.amount);
@@ -48,14 +72,15 @@ export async function processRefund(orderId: string): Promise<void> {
 
   let receipt;
   try {
-    receipt = await sendOnce(`refund:${orderId}`, refundWallet(), req);
+    // purpose for full refunds kept as 'refund:<order>' so earlier recorded txs still match
+    receipt = await sendOnce(kind === "full" ? `refund:${orderId}` : `refund-${kind}:${orderId}`, refundWallet(), req);
   } catch (err) {
     await db.query("UPDATE refunds SET status = 'failed' WHERE id = $1", [refund.id]);
     throw err;
   }
-  logger.info({ orderId, hash: receipt.transactionHash }, "refund confirmed");
+  logger.info({ orderId, kind, hash: receipt.transactionHash }, "refund confirmed");
   await tx(async (client) => {
     await client.query("UPDATE refunds SET status = 'confirmed', tx_hash = $2 WHERE id = $1", [refund.id, receipt.transactionHash]);
-    await transition(client, orderId, "refunded");
+    if (kind === "full") await transition(client, orderId, "refunded");
   });
 }

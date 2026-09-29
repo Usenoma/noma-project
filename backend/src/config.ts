@@ -33,6 +33,7 @@ const schema = z.object({
   PAYMENT_XPUB: optionalString,
   USDC_ADDRESS: optionalAddress,
   INVOICE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+  OVERPAY_REFUND_MIN_USD: z.coerce.number().min(0).default(0.5),
 
   EXECUTOR_PRIVATE_KEY: optionalString,
   REFUND_PRIVATE_KEY: optionalString,
@@ -62,6 +63,10 @@ const schema = z.object({
 
   ESIMACCESS_KEY: optionalString,
   BITREFILL_KEY: optionalString,
+  BITREFILL_COUNTRIES: z
+    .string()
+    .default("US,XI")
+    .transform((v) => v.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean)),
   CRYPTOREFILLS_KEY: optionalString,
   BITLAUNCH_KEY: optionalString,
   VPNRESELLERS_KEY: optionalString,

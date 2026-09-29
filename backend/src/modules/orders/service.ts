@@ -25,6 +25,8 @@ export function pickRequiredFields(required: RequiredField[], fields: Record<str
       throw badRequest(`missing field: ${f.name}`);
     }
     if (f.type === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) throw badRequest(`invalid email: ${f.name}`);
+    if (f.type === "select" && !f.options?.some((o) => o.value === v)) throw badRequest(`invalid option for ${f.name}`);
+    if (f.type === "number" && !Number.isFinite(Number(v))) throw badRequest(`invalid number: ${f.name}`);
     out[f.name] = v;
   }
   return out;

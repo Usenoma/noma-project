@@ -23,7 +23,8 @@ const walletFromHeaders = (req: FastifyRequest) =>
   verifyWalletAuth(header(req, "x-wallet-address"), header(req, "x-wallet-signature"), header(req, "x-wallet-timestamp"));
 
 export async function orderRoutes(app: FastifyInstance) {
-  app.post("/orders", async (req, reply) => {
+  // each order allocates a deposit address and an invoice
+  app.post("/orders", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const body = createBody.parse(req.body);
     const { orderId, orderKey, invoice } = await createOrder({
       productId: body.product_id,

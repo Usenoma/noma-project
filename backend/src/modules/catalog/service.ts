@@ -40,7 +40,10 @@ export async function listProducts(query: CatalogQuery): Promise<Product[]> {
   };
 
   if (query.category) add("category = ?", query.category);
-  if (query.region) add("upper(region) = upper(?)", query.region);
+  if (query.region) {
+    params.push(query.region.toUpperCase());
+    where.push(`(upper(region) = $${params.length} OR specs -> 'countries' ? $${params.length})`);
+  }
   if (query.q) add("to_tsvector('simple', title) @@ plainto_tsquery('simple', ?)", query.q);
   if (query.maxPrice !== undefined) add("price_usd <= ?", query.maxPrice);
   for (const [key, min] of Object.entries(query.specs ?? {})) {
@@ -79,24 +82,28 @@ export async function syncSupplierCatalog(adapter: SupplierAdapter, products: No
     [adapter.id, adapter.name, adapter.category],
   );
 
-  for (const p of products) {
+  // batched upsert: some suppliers list thousands of SKUs
+  for (let i = 0; i < products.length; i += 500) {
+    const chunk = products.slice(i, i + 500);
     await db.query(
       `INSERT INTO products (supplier_id, supplier_sku, category, title, region, specs, cost_usd, price_usd, required_fields, synced_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+       SELECT $1, sku, category, title, region, specs, cost, price, fields, now()
+       FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::jsonb[], $7::numeric[], $8::numeric[], $9::jsonb[])
+         AS t(sku, category, title, region, specs, cost, price, fields)
        ON CONFLICT (supplier_id, supplier_sku) DO UPDATE SET
          title = EXCLUDED.title, region = EXCLUDED.region, specs = EXCLUDED.specs,
          cost_usd = EXCLUDED.cost_usd, price_usd = EXCLUDED.price_usd,
          required_fields = EXCLUDED.required_fields, synced_at = now()`,
       [
         adapter.id,
-        p.supplierSku,
-        p.category,
-        p.title,
-        p.region,
-        JSON.stringify(p.specs),
-        p.costUsd,
-        applyMarkup(p.costUsd, p.category, markup),
-        JSON.stringify(p.requiredFields),
+        chunk.map((p) => p.supplierSku),
+        chunk.map((p) => p.category),
+        chunk.map((p) => p.title),
+        chunk.map((p) => p.region),
+        chunk.map((p) => JSON.stringify(p.specs)),
+        chunk.map((p) => p.costUsd),
+        chunk.map((p) => applyMarkup(p.costUsd, p.category, markup)),
+        chunk.map((p) => JSON.stringify(p.requiredFields)),
       ],
     );
   }

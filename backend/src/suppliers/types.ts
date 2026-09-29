@@ -11,8 +11,9 @@ export type DeliverableType =
 export interface RequiredField {
   name: string;
   label: string;
-  type: "string" | "email" | "country" | "number";
+  type: "string" | "email" | "country" | "number" | "select";
   optional?: boolean;
+  options?: { value: string; label: string }[]; // for "select"
 }
 
 export interface NormalizedProduct {
@@ -36,6 +37,8 @@ export interface SupplierAdapter {
   id: string;
   name: string;
   category: Category;
+  /** Minimum time between catalog syncs (default: every catalog-sync tick). */
+  catalogTtlMinutes?: number;
   syncCatalog(): Promise<NormalizedProduct[]>;
   quote(sku: string, fields: Record<string, string>): Promise<{ costUsd: number }>;
   /** Suppliers that only reveal the secret at creation time (e.g. API keys) return it inline. */
@@ -47,4 +50,6 @@ export interface SupplierAdapter {
   status(supplierOrderId: string): Promise<SupplierStatus>;
   deliverable(supplierOrderId: string): Promise<Deliverable>;
   balance(): Promise<number>;
+  /** Time-limited products (e.g. VPS rentals): tear down the resource when the rental ends. */
+  release?(supplierOrderId: string): Promise<void>;
 }

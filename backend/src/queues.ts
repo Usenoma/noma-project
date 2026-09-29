@@ -4,6 +4,8 @@ import { bullConnection } from "./redis.js";
 export const QUEUE = {
   catalogSync: "catalog-sync",
   paymentWatcher: "payment-watcher",
+  priceFeed: "price-feed",
+  resourceExpiry: "resource-expiry",
   fulfillment: "fulfillment",
   refund: "refund",
   supplierBalance: "supplier-balance-monitor",

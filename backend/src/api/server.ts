@@ -1,7 +1,9 @@
+import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { config } from "../config.js";
 import { HttpError } from "../lib/errors.js";
+import { rateLimitRedis } from "../redis.js";
 import { adminRoutes } from "./routes/admin.js";
 import { agentRoutes } from "./routes/agent.js";
 import { catalogRoutes } from "./routes/catalog.js";
@@ -27,7 +29,10 @@ export function buildServer(): FastifyInstance {
     return reply.status(500).send({ error: "internal error" });
   });
 
-  app.get("/health", async () => ({ ok: true }));
+  // per-IP limits, shared across API instances via Redis; tighter on routes that cost money
+  app.register(rateLimit, { global: true, max: 120, timeWindow: "1 minute", redis: rateLimitRedis() });
+
+  app.get("/health", { config: { rateLimit: false } }, async () => ({ ok: true }));
 
   app.register(catalogRoutes);
   app.register(orderRoutes);

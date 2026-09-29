@@ -15,7 +15,7 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   paid: ["fulfilling"],
   fulfilling: ["delivered", "failed"],
   delivered: [],
-  expired: [],
+  expired: ["refunding"], // paid after expiry: the late payment is refunded
   failed: ["refunding"],
   refunding: ["refunded"],
   refunded: [],
