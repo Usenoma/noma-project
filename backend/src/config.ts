@@ -1,0 +1,74 @@
+import { z } from "zod";
+
+const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
+const blankToUndefined = (v: unknown) => (v === "" ? undefined : v);
+const optionalAddress = z.preprocess(blankToUndefined, address.optional());
+const optionalString = z.preprocess(blankToUndefined, z.string().optional());
+const optionalNumber = z.preprocess(blankToUndefined, z.coerce.number().optional());
+
+const schema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  PORT: z.coerce.number().default(3000),
+  LOG_LEVEL: z.string().default("info"),
+
+  DATABASE_URL: z.string().url(),
+  REDIS_URL: z.string().url(),
+
+  CHAIN_RPC_URL: optionalString,
+  CHAIN_ID: optionalNumber,
+  PAYMENT_CONFIRMATIONS: z.coerce.number().int().min(1).default(3),
+
+  NOMA_TOKEN_ADDRESS: optionalAddress,
+  REWARD_VAULT_ADDRESS: optionalAddress,
+  PONS_V2_FACTORY: optionalAddress,
+  PONS_FEE_ESCROW: optionalAddress,
+  NOMA_BONDING_CURVE: optionalAddress,
+  PONS_V2_MEME_HOOK: optionalAddress,
+  NOMA_V4_POOL_ID: optionalString,
+  NOMA_QUOTE_ASSET: z.string().default("ETH"),
+  STOCK_TOKEN_SOURCE: optionalString,
+  ZEC_TOKEN_ADDRESS: optionalAddress,
+  REWARD_INDEXER_START_BLOCK: z.preprocess(blankToUndefined, z.coerce.bigint().optional()),
+
+  PAYMENT_XPUB: optionalString,
+  USDC_ADDRESS: optionalAddress,
+  INVOICE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+
+  EXECUTOR_PRIVATE_KEY: optionalString,
+  REFUND_PRIVATE_KEY: optionalString,
+
+  AUTO_DISTRIBUTION_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  ELIGIBILITY_MIN_BALANCE: z.coerce.bigint().default(0n),
+  ELIGIBILITY_EXCLUDED_ADDRESSES: z
+    .string()
+    .default("")
+    .transform((v) =>
+      v
+        .split(",")
+        .map((a) => a.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+
+  ENCRYPTION_KEY: z.string().refine((v) => Buffer.from(v, "base64").length === 32, {
+    message: "ENCRYPTION_KEY must be 32 bytes, base64-encoded",
+  }),
+  ADMIN_TOKEN: z.string().min(24),
+
+  LLM_API_KEY: optionalString,
+  LLM_MODEL: z.string().default("claude-opus-5"),
+
+  ESIMACCESS_KEY: optionalString,
+  BITREFILL_KEY: optionalString,
+  CRYPTOREFILLS_KEY: optionalString,
+  BITLAUNCH_KEY: optionalString,
+  VPNRESELLERS_KEY: optionalString,
+  IPROYAL_KEY: optionalString,
+  OPENROUTER_PROVISIONING_KEY: optionalString,
+});
+
+export type Config = z.infer<typeof schema>;
+
+export const config: Config = schema.parse(process.env);
