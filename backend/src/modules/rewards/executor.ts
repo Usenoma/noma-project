@@ -4,6 +4,7 @@ import { chain } from "../../chain/client.js";
 import { erc20Abi, nomaStakingAbi, ponsFeeEscrowAbi, ponsSweepAbi } from "../../chain/abis/index.js";
 import { proposeSafeTx, safeTxStatus, type SafeCall } from "../../chain/safe.js";
 import { db } from "../../db/pool.js";
+import { alert } from "../../lib/alerts.js";
 import { logger } from "../../lib/logger.js";
 import { usdPrice, type PayAsset } from "../payments/assets.js";
 import { checkpointCycle, recordGenesis } from "../staking/service.js";
@@ -41,11 +42,15 @@ interface Proposal {
   safe_tx_hash: Hex;
   status: "proposed" | "executed" | "failed";
   execution_tx_hash: Hex | null;
+  created_at: Date;
 }
+
+/** A proposal still unsigned after this long gets a reminder (every REMIND_HOURS). */
+const REMIND_HOURS = 12;
 
 async function liveProposal(cycleId: number, kind: Kind): Promise<Proposal | undefined> {
   const { rows } = await db.query<Proposal>(
-    "SELECT id, safe_tx_hash, status, execution_tx_hash FROM safe_proposals WHERE cycle_id = $1 AND kind = $2 AND status <> 'failed'",
+    "SELECT id, safe_tx_hash, status, execution_tx_hash, created_at FROM safe_proposals WHERE cycle_id = $1 AND kind = $2 AND status <> 'failed'",
     [cycleId, kind],
   );
   return rows[0];
@@ -60,20 +65,34 @@ async function propose(cycleId: number, kind: Kind, calls: (SafeCall & { label: 
     nonce.toString(),
     JSON.stringify(calls.map((c) => ({ label: c.label, to: c.to, value: (c.value ?? 0n).toString() }))),
   ]);
-  logger.warn({ cycleId, kind, safeTxHash, nonce: nonce.toString() }, "ACTION Safe owners: sign and execute the queued reward transaction");
+  await alert(
+    "Safe owners: sign and execute the queued reward transaction",
+    { cycleId, kind, safeTxHash, nonce: nonce.toString() },
+    { kind: "action", key: `safe-proposed:${safeTxHash}`, cooldownSeconds: 30 * 86400 },
+  );
 }
 
 /** Poll the Safe Transaction Service; returns the execution receipt once executed successfully. */
 async function executed(p: Proposal, cycleId: number, kind: Kind) {
   if (p.status === "executed") return chain().getTransactionReceipt({ hash: p.execution_tx_hash! });
   const s = await safeTxStatus(p.safe_tx_hash);
-  if (!s.isExecuted || !s.transactionHash) return null;
+  if (!s.isExecuted || !s.transactionHash) {
+    const hours = (Date.now() - new Date(p.created_at).getTime()) / 3_600_000;
+    if (hours >= REMIND_HOURS) {
+      await alert(
+        "Safe reward transaction still waiting for signatures",
+        { cycleId, kind, safeTxHash: p.safe_tx_hash, waiting_hours: hours.toFixed(1) },
+        { kind: "action", key: `safe-waiting:${p.safe_tx_hash}`, cooldownSeconds: REMIND_HOURS * 3600 },
+      );
+    }
+    return null;
+  }
   if (!s.isSuccessful) {
     await db.query("UPDATE safe_proposals SET status = 'failed', execution_tx_hash = $2, updated_at = now() WHERE id = $1", [
       p.id,
       s.transactionHash,
     ]);
-    logger.error({ cycleId, kind, tx: s.transactionHash }, "ALERT Safe reward transaction reverted; it will be re-proposed");
+    await alert("Safe reward transaction reverted; it will be re-proposed", { cycleId, kind, tx: s.transactionHash }, { key: `safe-reverted:${s.transactionHash}` });
     return null;
   }
   await db.query("UPDATE safe_proposals SET status = 'executed', execution_tx_hash = $2, updated_at = now() WHERE id = $1", [
@@ -180,7 +199,11 @@ export async function advanceCycle(cycleId: number): Promise<void> {
       "INSERT INTO escrow_claims (cycle_id, quote_asset, amount, amount_usd, tx_hash, ts) VALUES ($1, $2, $3, $4, $5, now())",
       [cycleId, config.NOMA_QUOTE_ASSET, amount.toString(), await quoteUsd(amount), claimReceipt.transactionHash],
     );
-    logger.warn({ cycleId, claimed: amount.toString() }, "ACTION Safe owners: swap 50/50 into ZEC + Stock, then record via /admin");
+    await alert(
+      "Safe owners: swap 50/50 into ZEC + Stock, then record via /admin",
+      { cycleId, claimed: amount.toString() },
+      { kind: "action", key: `cycle-swap:${cycleId}`, cooldownSeconds: 30 * 86400 },
+    );
   }
 
   // B. swaps: recorded by an admin after the owners executed them (automated routing: TODO)

@@ -3,6 +3,7 @@ import { config } from "../../config.js";
 import { chain } from "../../chain/client.js";
 import { erc20Abi } from "../../chain/abis/index.js";
 import { db, tx } from "../../db/pool.js";
+import { alert } from "../../lib/alerts.js";
 import { logger } from "../../lib/logger.js";
 import { QUEUE, queue } from "../../queues.js";
 import { transition } from "../orders/service.js";
@@ -118,7 +119,7 @@ async function onConfirmed(inv: WatchedInvoice, received: bigint, head: bigint) 
 
   if (await refundableOverpayment(inv.asset, received - amount)) {
     if (payer) await startOverpaymentRefund(inv.order_id, received - amount, inv.asset, payer);
-    else logger.error({ orderId: inv.order_id }, "ALERT overpayment with unknown payer, refund manually");
+    else await alert("overpayment with unknown payer, refund manually", { orderId: inv.order_id }, { key: `overpay-unknown:${inv.order_id}` });
   }
 }
 
@@ -128,7 +129,7 @@ async function onLatePayment(inv: WatchedInvoice, received: bigint, head: bigint
   await transition(db, inv.order_id, "expired");
   await recordPayer(inv, head);
   await startRefund(inv.order_id).catch((err) =>
-    logger.error({ orderId: inv.order_id, err: String(err) }, "ALERT late payment refund could not start"),
+    alert("late payment refund could not start", { orderId: inv.order_id, err: String(err) }, { key: `late-refund:${inv.order_id}` }),
   );
 }
 

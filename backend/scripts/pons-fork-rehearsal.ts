@@ -33,6 +33,8 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 
 const RPC = process.env.FORK_RPC ?? "http://127.0.0.1:58645";
 const CHAIN_ID = 4663;
@@ -224,6 +226,19 @@ async function main() {
     ),
   );
 
+  // alerts are delivered to a local webhook so the rehearsal can assert on them
+  const alerts: { message: string; details: Record<string, unknown> }[] = [];
+  const hookServer = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      alerts.push(JSON.parse(body));
+      res.end();
+    });
+  });
+  await new Promise<void>((r) => hookServer.listen(0, "127.0.0.1", r));
+  const alertUrl = `http://127.0.0.1:${(hookServer.address() as AddressInfo).port}/alerts`;
+
   console.log("4. backend reward indexer against the fork (hook configured, pool not registered yet)");
   Object.assign(process.env, {
     CHAIN_RPC_URL: RPC,
@@ -237,6 +252,9 @@ async function main() {
     NOMA_QUOTE_ASSET: "ETH",
     SAFE_ADDRESS: SAFE,
     REWARD_INDEXER_START_BLOCK: String(startBlock),
+    ALERT_WEBHOOK_URL: alertUrl,
+    TELEGRAM_BOT_TOKEN: "",
+    MEMECOIN_FEES_PENDING_ALERT_HOURS: "0.0005", // ~2 s, so the fork run can see it fire
   });
   const { db } = await import("../src/db/pool.js");
   const { redis } = await import("../src/redis.js");
@@ -256,7 +274,7 @@ async function main() {
   const cycleId = cyc[0]!.id;
   const { getCursor } = await import("../src/db/pool.js");
   const indexAll = async () => {
-    const head = await client.getBlockNumber();
+    const head = await client.getBlockNumber({ cacheTime: 0 });
     for (let i = 0; i < 5 && ((await getCursor("reward-indexer")) ?? 0n) < head; i++) await indexRewards();
   };
   await indexAll();
@@ -296,7 +314,9 @@ async function main() {
     }),
     "factory owner proposes a new creator fee recipient (3-day timelock)",
   );
-  await indexRewards(); // expect an "ALERT $NOMA creator fee recipient change" log line above
+  await indexRewards();
+  const recipientAlert = alerts.find((a) => a.message.includes("creator fee recipient change"));
+  check(recipientAlert?.details.proposedRecipient === creator.address, "recipient-change ALERT delivered to the webhook");
 
   console.log("6. Safe batch: sweep + escrow claim (what executor step A proposes)");
   const claimCall = { label: "Pons Fee Escrow claim (ETH)", to: escrow, data: encodeFunctionData({ abi: ponsFeeEscrowAbi, functionName: "claim" }) };
@@ -408,6 +428,11 @@ async function main() {
   check(BigInt(memeRow.base) === mFee && BigInt(memeRow.tax) === mTax, "indexed memecoin fee / tax equal the hook's pending memecoin balances");
   lp = await redis.hgetall(livePoolKey(cycleId));
   check(BigInt(lp.pending_memecoin!) === pendingCreatorPayout(mFee, mTax, hookShare) && BigInt(lp.pending!) === 0n, "live pool reports the memecoin payout separately");
+  await new Promise((r) => setTimeout(r, 2_500));
+  await indexAll();
+  await client.mine({ blocks: 1 });
+  await indexAll();
+  check(alerts.some((a) => a.message.includes("memecoin fees")), "ALERT delivered: memecoin fees pending longer than the threshold");
   check((await sweepCalls()).length === 0, "Safe cannot sweep while memecoin fees are pending (needs the Pons operator); skipped");
   const operator = await client.readContract({ address: hook, abi: hookSweptAbi, functionName: "feeSweepOperator" });
   await client.impersonateAccount({ address: operator });
@@ -428,6 +453,8 @@ async function main() {
   lp = await redis.hgetall(livePoolKey(cycleId));
   check(BigInt(lp.claimable!) === credited && BigInt(lp.pending_memecoin!) === 0n, "live pool moved it from pending_memecoin to claimable");
 
+  console.log(`  alerts delivered: ${alerts.map((a) => a.message).join(" | ")}`);
+  hookServer.close();
   console.log("PONS REHEARSAL OK");
   await redis.quit();
   await db.end();

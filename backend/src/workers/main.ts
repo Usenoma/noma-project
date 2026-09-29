@@ -1,6 +1,7 @@
 import { Worker, type Job, type Processor } from "bullmq";
 import { chainConfigured } from "../chain/client.js";
 import { db } from "../db/pool.js";
+import { alert } from "../lib/alerts.js";
 import { logger } from "../lib/logger.js";
 import { syncSupplierCatalog } from "../modules/catalog/service.js";
 import { fulfill, markFulfillmentFailed, SupplierPendingError } from "../modules/fulfillment/service.js";
@@ -22,9 +23,9 @@ async function supplierBalances() {
         "UPDATE suppliers SET balance_usd = $2, updated_at = now() WHERE id = $1 RETURNING balance_alert_usd",
         [a.id, balance],
       );
-      const alert = rows[0]?.balance_alert_usd;
-      if (alert !== null && alert !== undefined && balance < Number(alert)) {
-        logger.warn({ supplier: a.id, balance, alert: Number(alert) }, "ALERT supplier balance low");
+      const threshold = rows[0]?.balance_alert_usd;
+      if (threshold !== null && threshold !== undefined && balance < Number(threshold)) {
+        await alert("supplier balance low", { supplier: a.id, balance_usd: balance, threshold_usd: Number(threshold) },{ key: `supplier-balance:${a.id}`, cooldownSeconds: 6 * 3600 });
       }
     } catch (err) {
       logger.error({ err, supplier: a.id }, "supplier balance check failed");
@@ -60,7 +61,7 @@ async function releaseExpiredResources() {
       await db.query("UPDATE supplier_resources SET released_at = now() WHERE order_id = $1", [r.order_id]);
       logger.info({ orderId: r.order_id, supplier: r.supplier_id }, "rental released");
     } catch (err) {
-      logger.error({ err: String(err), orderId: r.order_id }, "ALERT rental release failed (still billing)");
+      await alert("rental release failed (still billing)", { orderId: r.order_id, err: String(err) }, { key: `rental-release:${r.order_id}`, cooldownSeconds: 6 * 3600 });
     }
   }
 }
@@ -124,7 +125,7 @@ async function main() {
     if (!job || job.attemptsMade < (job.opts.attempts ?? 1)) return;
     const { orderId } = job.data as { orderId: string };
     await markFulfillmentFailed(orderId, err.message);
-    await startRefund(orderId).catch((e) => logger.error({ orderId, err: e.message }, "ALERT refund could not start"));
+    await startRefund(orderId).catch((e) => alert("refund could not start", { orderId, err: e.message }, { key: `refund-start:${orderId}` }));
   });
 
   logger.info({ workers: workers.map((w) => w.name) }, "workers started");

@@ -55,6 +55,13 @@ const schema = z.object({
   }),
   ADMIN_TOKEN: z.string().min(24),
 
+  // Alert delivery (all optional; without them alerts are log lines only)
+  TELEGRAM_BOT_TOKEN: optionalString,
+  TELEGRAM_CHAT_ID: optionalString,
+  ALERT_WEBHOOK_URL: z.preprocess(blankToUndefined, z.string().url().optional()),
+  // memecoin-denominated Pons hook fees pending longer than this → alert (Pons operator not sweeping)
+  MEMECOIN_FEES_PENDING_ALERT_HOURS: z.coerce.number().positive().default(48),
+
   LLM_API_KEY: optionalString,
   LLM_MODEL: z.string().default("claude-opus-5"),
 

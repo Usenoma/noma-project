@@ -10,6 +10,7 @@ import { allowedFrom, canTransition } from "../src/modules/orders/status.js";
 import { depositAddress } from "../src/chain/depositAddress.js";
 import { combineQuotes } from "../src/modules/payments/priceFeed.js";
 import { pickRequiredFields } from "../src/modules/orders/service.js";
+import { formatAlert } from "../src/lib/alerts.js";
 
 describe("crypto", () => {
   const key = Buffer.alloc(32, 1);
@@ -106,5 +107,15 @@ describe("required fields", () => {
     expect(pickRequiredFields([os], { os: "10000", extra: "x" })).toEqual({ os: "10000" });
     expect(() => pickRequiredFields([os], { os: "rm -rf" })).toThrow(/invalid option/);
     expect(() => pickRequiredFields([os], {})).toThrow(/missing field/);
+  });
+});
+
+describe("alerts", () => {
+  it("formats a plain-text body, skipping empty details", () => {
+    const text = formatAlert("action", "Safe owners: sign", { cycleId: 3, safeTxHash: "0xab", skipped: undefined, none: null, obj: { n: 1n } });
+    expect(text).toBe(`[NOMA test] ACTION: Safe owners: sign
+cycleId: 3
+safeTxHash: 0xab
+obj: {"n":"1"}`);
   });
 });

@@ -1,3 +1,4 @@
+import { alert } from "../../lib/alerts.js";
 import { logger } from "../../lib/logger.js";
 import { redis } from "../../redis.js";
 
@@ -57,7 +58,7 @@ export async function refreshEthPrice(): Promise<void> {
   });
   const price = combineQuotes(quotes);
   if (price === null) {
-    logger.error({ quotes }, "ALERT ETH price unavailable or sources diverge; ETH checkout disabled until recovered");
+    await alert("ETH price unavailable or sources diverge; ETH checkout disabled until recovered", { quotes }, { key: "eth-price" });
     return;
   }
   await redis.set("price:ETH", price.toFixed(2), "EX", PRICE_TTL_SECONDS);

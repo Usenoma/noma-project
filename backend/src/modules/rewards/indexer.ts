@@ -3,6 +3,7 @@ import { config } from "../../config.js";
 import { chain } from "../../chain/client.js";
 import { ponsCurveAbi, ponsFactoryAbi, ponsFeeEscrowAbi, ponsHookAbi } from "../../chain/abis/index.js";
 import { db, getCursor, setCursor, tx } from "../../db/pool.js";
+import { alert } from "../../lib/alerts.js";
 import { logger } from "../../lib/logger.js";
 import { redis } from "../../redis.js";
 import { usdPrice, type PayAsset } from "../payments/assets.js";
@@ -60,9 +61,11 @@ async function hookLaunchInfo() {
   const [registered, , memecoin, quoteToken, creator, , , , protocolFeeShareBps, , , , buybackEnabled] = r;
   if (!registered) return undefined;
   if (config.SAFE_ADDRESS && creator.toLowerCase() !== config.SAFE_ADDRESS.toLowerCase()) {
-    logger.error({ creator, safe: config.SAFE_ADDRESS }, "ALERT Pons pool creator fee recipient is not the Reward Engine Safe");
+    await alert("Pons pool creator fee recipient is not the Reward Engine Safe", { creator, safe: config.SAFE_ADDRESS }, { key: "pons-pool-creator", cooldownSeconds: 6 * 3600 });
   }
-  if (buybackEnabled) logger.error("ALERT Pons buyback is enabled for $NOMA; the Safe can no longer sweep pool fees itself");
+  if (buybackEnabled) {
+    await alert("Pons buyback is enabled for $NOMA; the Safe can no longer sweep pool fees itself", {}, { key: "pons-buyback", cooldownSeconds: 6 * 3600 });
+  }
   hookLaunch = { quoteToken, memecoin, protocolFeeShareBps: BigInt(protocolFeeShareBps) };
   return hookLaunch;
 }
@@ -85,7 +88,7 @@ async function watchFeeRecipient(client: ReturnType<typeof chain>, fromBlock: bi
   for (const l of logs) {
     if (l.args.token?.toLowerCase() !== token) continue;
     const args = Object.fromEntries(Object.entries(l.args).map(([k, v]) => [k, typeof v === "bigint" ? v.toString() : v]));
-    logger.error({ event: l.eventName, tx: l.transactionHash, ...args }, "ALERT $NOMA creator fee recipient change on the Pons factory");
+    await alert("$NOMA creator fee recipient change on the Pons factory", { event: l.eventName, tx: l.transactionHash, ...args }, { key: `pons-recipient:${l.transactionHash}:${l.logIndex}`, cooldownSeconds: 30 * 86400 });
   }
 }
 
@@ -267,4 +270,27 @@ export async function refreshLivePool(): Promise<void> {
     stock_usd: (await quoteUsd(pool.stock)) ?? "",
     updated_at: new Date().toISOString(),
   });
+  await watchMemecoinPending(pending.memecoin);
+}
+
+const MEMECOIN_PENDING_SINCE = "rewards:memecoin-pending-since";
+
+/**
+ * Memecoin-denominated hook fees block the Safe's own pool sweep (quote fees included) until the
+ * Pons fee sweep operator converts them. Alert when that has not happened for too long.
+ */
+async function watchMemecoinPending(amount: bigint): Promise<void> {
+  if (amount === 0n) {
+    await redis.del(MEMECOIN_PENDING_SINCE);
+    return;
+  }
+  await redis.set(MEMECOIN_PENDING_SINCE, String(Date.now()), "NX");
+  const hours = (Date.now() - Number(await redis.get(MEMECOIN_PENDING_SINCE))) / 3_600_000;
+  if (hours >= config.MEMECOIN_FEES_PENDING_ALERT_HOURS) {
+    await alert(
+      "Pons has not converted $NOMA memecoin fees; the Safe cannot sweep the pool",
+      { pending_memecoin: amount.toString(), pending_hours: hours.toFixed(1) },
+      { key: "memecoin-pending", cooldownSeconds: 12 * 3600 },
+    );
+  }
 }
