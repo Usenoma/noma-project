@@ -1,9 +1,10 @@
 import { buildServer } from "./api/server.js";
-import { config } from "./config.js";
+import { assertNoSweeperSecrets, config } from "./config.js";
 import { db } from "./db/pool.js";
 import { closeQueues } from "./queues.js";
 import { redis } from "./redis.js";
 
+assertNoSweeperSecrets("api");
 const app = buildServer();
 
 const shutdown = async () => {

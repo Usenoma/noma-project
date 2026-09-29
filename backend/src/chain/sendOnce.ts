@@ -7,6 +7,10 @@ export interface TxRequest {
   to: Address;
   data?: Hex;
   value?: bigint;
+  /** Fixed gas terms, e.g. when value = balance - gas cost (a sweep of the whole balance). */
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
 }
 
 /**
@@ -32,6 +36,9 @@ export async function sendOnce(purpose: string, wallet: NomaWallet, req: TxReque
       to: req.to,
       data: req.data,
       value: req.value,
+      gas: req.gas,
+      maxFeePerGas: req.maxFeePerGas,
+      maxPriorityFeePerGas: req.maxPriorityFeePerGas,
     });
     raw = await wallet.signTransaction(prepared);
     hash = keccak256(raw);

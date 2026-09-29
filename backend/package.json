@@ -12,6 +12,8 @@
     "build": "tsc -p tsconfig.json",
     "start:api": "node --env-file-if-exists=.env dist/main.js",
     "start:workers": "node --env-file-if-exists=.env dist/workers/main.js",
+    "sweeper": "tsx --env-file-if-exists=.env src/sweeper/main.ts",
+    "start:sweeper": "node --env-file-if-exists=.env dist/sweeper/main.js",
     "migrate": "tsx --env-file-if-exists=.env src/db/migrate.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

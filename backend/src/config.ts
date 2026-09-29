@@ -36,6 +36,14 @@ const schema = z.object({
 
   REFUND_PRIVATE_KEY: optionalString,
 
+  // Deposit sweeper (separate process, src/sweeper/main.ts). PAYMENT_XPRV is the private
+  // counterpart of PAYMENT_XPUB and must only ever be configured for the sweeper.
+  PAYMENT_XPRV: optionalString,
+  TREASURY_ADDRESS: optionalAddress,
+  SWEEPER_GAS_PRIVATE_KEY: optionalString, // funds gas for token sweeps out of deposit addresses
+  SWEEP_MIN_USD: z.coerce.number().min(0).default(5),
+  SWEEP_INTERVAL_MINUTES: z.coerce.number().positive().default(60),
+
   // Reward Engine Safe multisig: Pons creator fee recipient + NomaStaking EXECUTOR.
   // The backend only proposes batches (delegate key); owners sign and execute in Safe{Wallet}.
   SAFE_ADDRESS: optionalAddress,
@@ -81,3 +89,10 @@ const schema = z.object({
 export type Config = z.infer<typeof schema>;
 
 export const config: Config = schema.parse(process.env);
+
+/** API and workers must never hold the deposit xprv: it belongs to the sweeper process only. */
+export function assertNoSweeperSecrets(role: string): void {
+  if (config.PAYMENT_XPRV && config.NODE_ENV === "production") {
+    throw new Error(`${role}: PAYMENT_XPRV must not be configured here (sweeper only)`);
+  }
+}

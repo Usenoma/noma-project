@@ -28,7 +28,7 @@ export function chain(): PublicClient {
 
 export type NomaWallet = ReturnType<typeof walletFor>;
 
-function walletFor(privateKey: string | undefined, role: string) {
+export function walletFor(privateKey: string | undefined, role: string) {
   if (!privateKey) throw new Error(`${role} private key not configured`);
   return createWalletClient({
     account: privateKeyToAccount(privateKey as Hex),

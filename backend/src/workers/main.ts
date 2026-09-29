@@ -1,5 +1,6 @@
 import { Worker, type Job, type Processor } from "bullmq";
 import { chainConfigured } from "../chain/client.js";
+import { assertNoSweeperSecrets } from "../config.js";
 import { db } from "../db/pool.js";
 import { alert } from "../lib/alerts.js";
 import { logger } from "../lib/logger.js";
@@ -95,6 +96,7 @@ const schedules: { queue: QueueName; everyMs: number; needsChain?: boolean }[] =
 ];
 
 async function main() {
+  assertNoSweeperSecrets("workers");
   for (const s of schedules) {
     if (s.needsChain && !chainConfigured) {
       logger.warn({ queue: s.queue }, "chain not configured, schedule skipped");
