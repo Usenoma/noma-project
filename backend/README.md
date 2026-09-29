@@ -32,10 +32,12 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
 
 - **Order key** is returned once by `POST /orders`; only its sha256 is stored.
 - **Deposit addresses** are derived from `PAYMENT_XPUB`; the API never holds the payment private key.
-- **Fund-moving txs** (refunds, escrow claims, swaps, staking reward notifications) go through `sendOnce`: signed tx + hash are
+- **Fund-moving txs** (refunds) go through `sendOnce`: signed tx + hash are
   written to `chain_txs` before broadcast, so a crashed job resumes without double-sending.
 - **Fulfillment** uses `idempotency_key = order id`; once a supplier order id is recorded, retries only poll.
 - **Stock of the Week**: only the `active` cycle is ever returned by the API.
+- **Reward funds live in a Safe multisig**: the executor only proposes Safe transactions (delegate key) and
+  waits for the owners to sign and execute them; `GET /admin/cycles/:id` shows the next action.
 - **Rewards are staking-based**: only $NOMA staked in NomaStaking (`../contracts`) earns. The executor streams
   each cycle's ZEC + Stock Token into NomaStaking; stakers claim. Collection entries come from per-cycle
   on-chain checkpoints (`earned + totalClaimed`), GENESIS = wallets staked during week 1.
@@ -59,7 +61,8 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
 ## Not done yet (TODO in code)
 
 - Pons V2 ABIs/event signatures (`src/chain/abis`), fee sweep before claim — see Pons V2 notes.
-- RewardVault contract itself, and swap routing/quotes in the executor (`quoteSwap` throws on purpose).
+- Automated 50/50 swap proposals (DEX routing on Robinhood Chain); today the Safe owners swap and an admin
+  records it via `POST /admin/cycles/:id/acquisitions`. A RewardVault contract may later replace the Safe.
 - Sweeping deposit addresses into treasury (separate signer holding the xprv).
 - Adapters: Cryptorefills, VPNResellers, IPRoyal. Bitrefill range-denominated products, phone top-ups.
 - Webhooks from suppliers (currently polling).

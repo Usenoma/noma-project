@@ -37,6 +37,5 @@ function walletFor(privateKey: string | undefined, role: string) {
   });
 }
 
-/** Executor and refund wallets are separate keys with limited float (architecture.md §6). */
-export const executorWallet = () => walletFor(config.EXECUTOR_PRIVATE_KEY, "executor");
+/** Refund hot wallet with limited float (architecture.md §6). Reward funds live in the Safe. */
 export const refundWallet = () => walletFor(config.REFUND_PRIVATE_KEY, "refund");

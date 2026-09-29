@@ -2,8 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { config } from "../../config.js";
-import { unauthorized } from "../../lib/errors.js";
+import { badRequest, unauthorized } from "../../lib/errors.js";
 import {
+  cycleExecutionStatus,
   manualRefund,
   revealNextCycle,
   scheduleCycle,
@@ -12,6 +13,7 @@ import {
   setSupplierBalanceAlert,
   suppliers,
 } from "../../modules/admin/service.js";
+import { recordAcquisitions } from "../../modules/rewards/executor.js";
 
 const pct = z.number().min(0).max(5);
 const markupBody = z
@@ -83,4 +85,27 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.post("/cycles/reveal-next", () => revealNextCycle());
+
+  // Reward cycle execution via the Safe: current step, queued Safe proposals, recorded amounts
+  app.get("/cycles/:id", async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
+    return cycleExecutionStatus(id);
+  });
+
+  // Record the 50/50 swaps the Safe owners executed (until swap routing is automated)
+  const swap = z.object({
+    amount_in: z.string().regex(/^\d+$/),
+    amount_out: z.string().regex(/^[1-9]\d*$/),
+    tx_hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+  });
+  app.post("/cycles/:id/acquisitions", async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
+    const body = z.object({ ZEC: swap, STOCK: swap }).parse(req.body);
+    try {
+      await recordAcquisitions(id, body as Parameters<typeof recordAcquisitions>[1]);
+    } catch (err) {
+      throw badRequest((err as Error).message);
+    }
+    return { ok: true };
+  });
 }

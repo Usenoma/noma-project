@@ -69,3 +69,31 @@ export async function revealNextCycle() {
     return rows[0];
   });
 }
+
+/** Where a reward cycle is in the Safe flow, for the operator running the multisig. */
+export async function cycleExecutionStatus(cycleId: number) {
+  const [cycle, proposals, claims, acquisitions] = await Promise.all([
+    db.query("SELECT id, week_no, stock_symbol, stock_token_address, starts_at, ends_at, status FROM reward_cycles WHERE id = $1", [cycleId]),
+    db.query(
+      "SELECT kind, safe_tx_hash, nonce, status, execution_tx_hash, calls, created_at FROM safe_proposals WHERE cycle_id = $1 ORDER BY id",
+      [cycleId],
+    ),
+    db.query("SELECT quote_asset, amount, amount_usd, tx_hash FROM escrow_claims WHERE cycle_id = $1", [cycleId]),
+    db.query("SELECT asset, amount_in, amount_out, usd_value, tx_hash FROM reward_acquisitions WHERE cycle_id = $1", [cycleId]),
+  ]);
+  if (!cycle.rows[0]) throw notFound("cycle");
+  const live = (kind: string) => proposals.rows.find((p) => p.kind === kind && p.status !== "failed");
+  const next =
+    cycle.rows[0].status !== "executing"
+      ? null
+      : !live("claim")
+        ? "waiting for the executor to propose the claim"
+        : live("claim").status === "proposed"
+          ? "Safe owners: sign and execute the claim transaction"
+          : acquisitions.rows.length < 2
+            ? "Safe owners: swap 50/50 into ZEC + Stock, then POST /admin/cycles/:id/acquisitions"
+            : !live("fund_staking")
+              ? "waiting for the executor to propose notifyReward"
+              : "Safe owners: sign and execute the notifyReward transaction";
+  return { cycle: cycle.rows[0], next_action: next, proposals: proposals.rows, escrow_claims: claims.rows, acquisitions: acquisitions.rows };
+}

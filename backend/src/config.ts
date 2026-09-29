@@ -19,7 +19,6 @@ const schema = z.object({
   PAYMENT_CONFIRMATIONS: z.coerce.number().int().min(1).default(3),
 
   NOMA_TOKEN_ADDRESS: optionalAddress,
-  REWARD_VAULT_ADDRESS: optionalAddress,
   PONS_V2_FACTORY: optionalAddress,
   PONS_FEE_ESCROW: optionalAddress,
   NOMA_BONDING_CURVE: optionalAddress,
@@ -35,8 +34,15 @@ const schema = z.object({
   INVOICE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   OVERPAY_REFUND_MIN_USD: z.coerce.number().min(0).default(0.5),
 
-  EXECUTOR_PRIVATE_KEY: optionalString,
   REFUND_PRIVATE_KEY: optionalString,
+
+  // Reward Engine Safe multisig: Pons creator fee recipient + NomaStaking EXECUTOR.
+  // The backend only proposes batches (delegate key); owners sign and execute in Safe{Wallet}.
+  SAFE_ADDRESS: optionalAddress,
+  SAFE_PROPOSER_PRIVATE_KEY: optionalString,
+  SAFE_TX_SERVICE_URL: z.string().url().default("https://api.safe.global/tx-service/robinhood"),
+  SAFE_API_KEY: optionalString,
+  SAFE_MULTISEND_CALL_ONLY: address.default("0x9641d764fc13c8B624c04430C7356C1C7C8102e2"), // Safe v1.4.1 canonical
 
   // NomaStaking: only staked $NOMA is eligible for rewards. Durations (seconds) mirror the
   // contract's immutables and are only used for display / methodology.

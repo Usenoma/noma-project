@@ -122,19 +122,21 @@ export async function indexRewards(): Promise<void> {
   await refreshLivePool();
 }
 
-/** pool = claimed into RewardVault this cycle + still claimable in the Pons Fee Escrow. */
+/**
+ * pool = claimed into the Safe this cycle + the Safe's balance in the Pons Fee Escrow.
+ * TODO: add fees still pending in the curve/hook (not yet swept into the escrow).
+ */
 export async function refreshLivePool(): Promise<void> {
   const cycle = await activeCycle();
-  if (!cycle || !config.PONS_FEE_ESCROW || !config.REWARD_VAULT_ADDRESS) return;
+  if (!cycle || !config.PONS_FEE_ESCROW || !config.SAFE_ADDRESS) return;
+  const safe = config.SAFE_ADDRESS as Address;
+  const escrow = config.PONS_FEE_ESCROW as Address;
 
   const [{ rows }, claimable] = await Promise.all([
     db.query<{ claimed: string }>("SELECT COALESCE(sum(amount), 0) AS claimed FROM escrow_claims WHERE cycle_id = $1", [cycle.id]),
-    chain().readContract({
-      address: config.PONS_FEE_ESCROW as Address,
-      abi: ponsFeeEscrowAbi,
-      functionName: "claimable",
-      args: [config.REWARD_VAULT_ADDRESS as Address, quoteToken()],
-    }),
+    config.NOMA_QUOTE_ASSET === "ETH"
+      ? chain().readContract({ address: escrow, abi: ponsFeeEscrowAbi, functionName: "balanceOf", args: [safe] })
+      : chain().readContract({ address: escrow, abi: ponsFeeEscrowAbi, functionName: "balanceOfToken", args: [safe, quoteToken()] }),
   ]);
   const pool = cyclePool(BigInt(rows[0]!.claimed), claimable);
 

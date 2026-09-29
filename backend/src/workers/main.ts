@@ -7,7 +7,7 @@ import { fulfill, markFulfillmentFailed, SupplierPendingError } from "../modules
 import { refreshEthPrice } from "../modules/payments/priceFeed.js";
 import { watchPayments } from "../modules/payments/watcher.js";
 import { processRefund, startRefund, type RefundKind } from "../modules/refunds/service.js";
-import { executeDueCycle, runExecutor } from "../modules/rewards/executor.js";
+import { advanceCycle, executeDueCycle } from "../modules/rewards/executor.js";
 import { indexRewards } from "../modules/rewards/indexer.js";
 import { indexStaking } from "../modules/staking/indexer.js";
 import { closeQueues, QUEUE, queue, type QueueName } from "../queues.js";
@@ -79,7 +79,7 @@ const processors: Record<QueueName, Processor> = {
     await indexRewards();
   },
   [QUEUE.rewardExecutor]: async (job: Job<{ cycleId?: number }>) =>
-    job.data.cycleId ? runExecutor(job.data.cycleId) : executeDueCycle(),
+    job.data.cycleId ? advanceCycle(job.data.cycleId) : executeDueCycle(),
 };
 
 /** Repeatable schedules (backend.md §10). Chain workers only run once the chain is configured. */

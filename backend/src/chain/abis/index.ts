@@ -2,20 +2,6 @@ import { erc20Abi, parseAbi } from "viem";
 
 export { erc20Abi };
 
-/**
- * RewardVault (NOMA-owned contract). Only the executor role may swap; every movement emits events.
- * `fundStaking` approves NomaStaking and calls notifyReward (the vault holds NomaStaking's
- * EXECUTOR role).
- * TODO: replace with the compiled ABI once the contract is written.
- */
-export const rewardVaultAbi = parseAbi([
-  "function claimFromEscrow(address quoteAsset) returns (uint256 claimed)",
-  "function swap(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut, bytes route) returns (uint256 amountOut)",
-  "function fundStaking(address asset, uint256 amount)",
-  "event EscrowClaimed(address indexed quoteAsset, uint256 amount)",
-  "event Swapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut)",
-]);
-
 /** NomaStaking (contracts/src/NomaStaking.sol). */
 export const nomaStakingAbi = parseAbi([
   "function stake(uint256 amount)",
@@ -41,11 +27,26 @@ export const nomaStakingAbi = parseAbi([
 ]);
 
 /**
- * Pons V2 fee escrow. Creator fees accrue here and are claim-based.
- * TODO: verify function signature against the deployed Pons V2 Fee Escrow.
+ * Pons V2 fee escrow (IPonsV2FeeEscrow, pons-labs contractsV2/src/v2/interfaces/ILaunchpadV2.sol).
+ * Creator fees are credited here on sweep and claimed by the recipient itself (msg.sender):
+ * native ETH via claim(), pair tokens via claimToken(token).
  */
 export const ponsFeeEscrowAbi = parseAbi([
-  "function claimable(address creator, address token) view returns (uint256)",
+  "function claim() returns (uint256 amount)",
+  "function claimToken(address token) returns (uint256 amount)",
+  "function balanceOf(address recipient) view returns (uint256)",
+  "function balanceOfToken(address recipient, address token) view returns (uint256)",
+]);
+
+/**
+ * Pons V2 fee sweeps move pending fees into the escrow. Callable by the fee sweep operator or,
+ * without internal buyback, by the curve deployer (pre-graduation) / creator fee recipient
+ * (post-graduation). Keep buyback disabled so the Safe can sweep itself.
+ */
+export const ponsSweepAbi = parseAbi([
+  "function sweepFees(uint256 minBuybackTokensOut)",
+  "function sweepPoolFees(bytes32 poolId, uint256 minConversionQuoteOut, uint256 minBuybackTokensOut)",
+  "function graduated() view returns (bool)",
 ]);
 
 /**

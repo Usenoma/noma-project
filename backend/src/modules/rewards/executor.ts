@@ -1,28 +1,31 @@
-import { decodeEventLog, encodeFunctionData, zeroAddress, type Address, type Hex } from "viem";
+import { encodeFunctionData, parseEventLogs, zeroAddress, type Address, type Hex } from "viem";
 import { config } from "../../config.js";
-import { executorWallet } from "../../chain/client.js";
-import { sendOnce } from "../../chain/sendOnce.js";
 import { chain } from "../../chain/client.js";
-import { nomaStakingAbi, rewardVaultAbi } from "../../chain/abis/index.js";
+import { erc20Abi, nomaStakingAbi, ponsFeeEscrowAbi, ponsSweepAbi } from "../../chain/abis/index.js";
+import { proposeSafeTx, safeTxStatus, type SafeCall } from "../../chain/safe.js";
 import { db } from "../../db/pool.js";
 import { logger } from "../../lib/logger.js";
 import { usdPrice, type PayAsset } from "../payments/assets.js";
 import { checkpointCycle, recordGenesis } from "../staking/service.js";
-import { cyclePool } from "./poolMath.js";
-
-const vault = () => config.REWARD_VAULT_ADDRESS as Address;
-const quoteToken = (): Address => (config.NOMA_QUOTE_ASSET === "ETH" ? zeroAddress : (config.NOMA_QUOTE_ASSET as Address));
 
 /**
- * Swap route + minimum output for quote → target token.
- * TODO: implement against the DEX on Robinhood Chain. Deliberately throws: swapping without a
- * real quote (minOut = 0) would expose the vault to sandwiching.
+ * Reward cycle execution with a Safe multisig (Pons creator fee recipient + NomaStaking EXECUTOR).
+ * The backend never moves reward funds: each step is proposed to the Safe queue and waits until
+ * the owners have signed and executed it.
+ *
+ *   cycle ends → checkpoint + GENESIS (backend only)
+ *   A. claim   : sweep pending Pons fees + claim from the Pons Fee Escrow into the Safe
+ *   B. swap    : 50/50 into ZEC + Stock of the Week — for now executed by the owners in Safe{Wallet}
+ *                and recorded via POST /admin/cycles/:id/acquisitions (automated routing: TODO)
+ *   C. fund    : approve + notifyReward(ZEC), approve + notifyReward(Stock) on NomaStaking
+ *   → cycle 'distributed' (rewards streaming to stakers)
  */
-async function quoteSwap(_tokenIn: Address, _tokenOut: Address, _amountIn: bigint): Promise<{ minAmountOut: bigint; route: Hex }> {
-  throw new Error("swap routing not implemented");
-}
 
-const vaultCall = (purpose: string, data: Hex) => sendOnce(purpose, executorWallet(), { to: vault(), data });
+type Kind = "claim" | "swap" | "fund_staking";
+
+const safe = () => config.SAFE_ADDRESS as Address;
+const isEthQuote = () => config.NOMA_QUOTE_ASSET === "ETH";
+const quoteToken = (): Address => (isEthQuote() ? zeroAddress : (config.NOMA_QUOTE_ASSET as Address));
 
 /** USD value of a raw quote-asset amount (18 decimals), or null without a price. */
 async function quoteUsd(raw: bigint): Promise<string | null> {
@@ -33,141 +36,232 @@ async function quoteUsd(raw: bigint): Promise<string | null> {
   }
 }
 
-/**
- * Close the active cycle whose end time has passed:
- * checkpoint the ended stream → claim escrow → swap 50/50 → stream both assets into NomaStaking.
- */
+interface Proposal {
+  id: number;
+  safe_tx_hash: Hex;
+  status: "proposed" | "executed" | "failed";
+  execution_tx_hash: Hex | null;
+}
+
+async function liveProposal(cycleId: number, kind: Kind): Promise<Proposal | undefined> {
+  const { rows } = await db.query<Proposal>(
+    "SELECT id, safe_tx_hash, status, execution_tx_hash FROM safe_proposals WHERE cycle_id = $1 AND kind = $2 AND status <> 'failed'",
+    [cycleId, kind],
+  );
+  return rows[0];
+}
+
+async function propose(cycleId: number, kind: Kind, calls: (SafeCall & { label: string })[]) {
+  const { safeTxHash, nonce } = await proposeSafeTx(calls, `NOMA reward cycle ${cycleId}: ${kind}`);
+  await db.query("INSERT INTO safe_proposals (cycle_id, kind, safe_tx_hash, nonce, calls) VALUES ($1, $2, $3, $4, $5)", [
+    cycleId,
+    kind,
+    safeTxHash,
+    nonce.toString(),
+    JSON.stringify(calls.map((c) => ({ label: c.label, to: c.to, value: (c.value ?? 0n).toString() }))),
+  ]);
+  logger.warn({ cycleId, kind, safeTxHash, nonce: nonce.toString() }, "ACTION Safe owners: sign and execute the queued reward transaction");
+}
+
+/** Poll the Safe Transaction Service; returns the execution receipt once executed successfully. */
+async function executed(p: Proposal, cycleId: number, kind: Kind) {
+  if (p.status === "executed") return chain().getTransactionReceipt({ hash: p.execution_tx_hash! });
+  const s = await safeTxStatus(p.safe_tx_hash);
+  if (!s.isExecuted || !s.transactionHash) return null;
+  if (!s.isSuccessful) {
+    await db.query("UPDATE safe_proposals SET status = 'failed', execution_tx_hash = $2, updated_at = now() WHERE id = $1", [
+      p.id,
+      s.transactionHash,
+    ]);
+    logger.error({ cycleId, kind, tx: s.transactionHash }, "ALERT Safe reward transaction reverted; it will be re-proposed");
+    return null;
+  }
+  await db.query("UPDATE safe_proposals SET status = 'executed', execution_tx_hash = $2, updated_at = now() WHERE id = $1", [
+    p.id,
+    s.transactionHash,
+  ]);
+  return chain().getTransactionReceipt({ hash: s.transactionHash });
+}
+
+/** Include a Pons sweep only if the Safe is allowed to run it right now (simulated from the Safe). */
+async function sweepCalls(): Promise<(SafeCall & { label: string })[]> {
+  const candidates: (SafeCall & { label: string })[] = [];
+  if (config.NOMA_BONDING_CURVE) {
+    candidates.push({
+      label: "Pons curve sweepFees",
+      to: config.NOMA_BONDING_CURVE as Address,
+      data: encodeFunctionData({ abi: ponsSweepAbi, functionName: "sweepFees", args: [0n] }),
+    });
+  }
+  if (config.PONS_V2_MEME_HOOK && config.NOMA_V4_POOL_ID) {
+    candidates.push({
+      label: "Pons V4 hook sweepPoolFees",
+      to: config.PONS_V2_MEME_HOOK as Address,
+      data: encodeFunctionData({ abi: ponsSweepAbi, functionName: "sweepPoolFees", args: [config.NOMA_V4_POOL_ID as Hex, 0n, 0n] }),
+    });
+  }
+  const ok: (SafeCall & { label: string })[] = [];
+  for (const c of candidates) {
+    try {
+      await chain().call({ account: safe(), to: c.to, data: c.data });
+      ok.push(c);
+    } catch (err) {
+      logger.warn({ call: c.label, err: String(err).slice(0, 200) }, "sweep not callable by the Safe now; skipped");
+    }
+  }
+  return ok;
+}
+
+/** Called every minute: start cycles that ended, then advance every executing cycle one step. */
 export async function executeDueCycle(): Promise<void> {
-  const { rows } = await db.query<{ id: number; week_no: number; stock_token_address: string | null }>(
-    `UPDATE reward_cycles SET status = 'executing'
-     WHERE status = 'active' AND ends_at <= now()
-     RETURNING id, week_no, stock_token_address`,
+  if (!config.SAFE_ADDRESS) return;
+  const { rows: started } = await db.query<{ id: number; week_no: number }>(
+    `UPDATE reward_cycles SET status = 'executing' WHERE status = 'active' AND ends_at <= now() RETURNING id, week_no`,
+  );
+  for (const c of started) {
+    logger.info({ cycle: c.week_no }, "reward cycle ended");
+    // what each staker received from the stream that just ended, before new rewards are notified
+    await checkpointCycle(c.id);
+    const genesis = await recordGenesis(c.id);
+    if (genesis) logger.info({ cycleId: c.id, genesis }, "GENESIS stakers recorded");
+  }
+
+  const { rows: executing } = await db.query<{ id: number }>("SELECT id FROM reward_cycles WHERE status = 'executing' ORDER BY week_no");
+  for (const c of executing) {
+    try {
+      await advanceCycle(c.id);
+    } catch (err) {
+      logger.error({ cycleId: c.id, err: String(err) }, "reward cycle step failed");
+    }
+  }
+}
+
+export async function advanceCycle(cycleId: number): Promise<void> {
+  const { rows } = await db.query<{ stock_symbol: string; stock_token_address: string | null }>(
+    "SELECT stock_symbol, stock_token_address FROM reward_cycles WHERE id = $1 AND status = 'executing'",
+    [cycleId],
   );
   const cycle = rows[0];
   if (!cycle) return;
-  logger.info({ cycle: cycle.week_no }, "executing reward cycle");
-  await runExecutor(cycle.id);
-}
 
-/** Resumable: every step is skipped if its record already exists. */
-export async function runExecutor(cycleId: number): Promise<void> {
-  const { rows } = await db.query<{ stock_token_address: string | null }>(
-    "SELECT stock_token_address FROM reward_cycles WHERE id = $1 AND status = 'executing'",
-    [cycleId],
-  );
-  if (!rows[0]) return;
-  const stockToken = rows[0].stock_token_address as Address | null;
-  if (!config.ZEC_TOKEN_ADDRESS) throw new Error("ZEC_TOKEN_ADDRESS not configured");
-  if (!stockToken) throw new Error(`cycle ${cycleId} has no stock token address`);
-
-  // 0. record what each staker received from the stream that just ended (collection entries),
-  //    before this cycle's notification folds any remainder into a new stream
-  await checkpointCycle(cycleId);
-  const genesis = await recordGenesis(cycleId);
-  if (genesis) logger.info({ cycleId, genesis }, "GENESIS stakers recorded");
-
-  // 1. claim from Pons Fee Escrow into RewardVault
-  const claimedBefore = await db.query("SELECT 1 FROM escrow_claims WHERE cycle_id = $1", [cycleId]);
-  if (!claimedBefore.rowCount) {
-    const receipt = await vaultCall(
-      `claim:${cycleId}`,
-      encodeFunctionData({ abi: rewardVaultAbi, functionName: "claimFromEscrow", args: [quoteToken()] }),
-    );
+  // A. sweep + claim into the Safe
+  const claim = await liveProposal(cycleId, "claim");
+  if (!claim) {
+    const escrow = config.PONS_FEE_ESCROW as Address;
+    return propose(cycleId, "claim", [
+      ...(await sweepCalls()),
+      isEthQuote()
+        ? { label: "Pons Fee Escrow claim (ETH)", to: escrow, data: encodeFunctionData({ abi: ponsFeeEscrowAbi, functionName: "claim" }) }
+        : {
+            label: "Pons Fee Escrow claimToken",
+            to: escrow,
+            data: encodeFunctionData({ abi: ponsFeeEscrowAbi, functionName: "claimToken", args: [quoteToken()] }),
+          },
+    ]);
+  }
+  const claimReceipt = await executed(claim, cycleId, "claim");
+  if (!claimReceipt) return;
+  const claimed = await db.query("SELECT 1 FROM escrow_claims WHERE cycle_id = $1", [cycleId]);
+  if (!claimed.rowCount) {
+    // the escrow implementation is not published, so measure what reached the Safe
     let amount = 0n;
-    for (const log of receipt.logs) {
-      try {
-        const ev = decodeEventLog({ abi: rewardVaultAbi, data: log.data, topics: log.topics });
-        if (ev.eventName === "EscrowClaimed") amount += ev.args.amount;
-      } catch {
-        /* not a vault event */
+    if (isEthQuote()) {
+      const n = claimReceipt.blockNumber;
+      amount =
+        (await chain().getBalance({ address: safe(), blockNumber: n })) - (await chain().getBalance({ address: safe(), blockNumber: n - 1n }));
+    } else {
+      for (const log of parseEventLogs({ abi: erc20Abi, eventName: "Transfer", logs: claimReceipt.logs })) {
+        if (log.address.toLowerCase() === quoteToken().toLowerCase() && log.args.to.toLowerCase() === safe().toLowerCase()) {
+          amount += log.args.value;
+        }
       }
     }
     await db.query(
-      "INSERT INTO escrow_claims (cycle_id, quote_asset, amount, tx_hash, ts) VALUES ($1, $2, $3, $4, now())",
-      [cycleId, config.NOMA_QUOTE_ASSET, amount.toString(), receipt.transactionHash],
+      "INSERT INTO escrow_claims (cycle_id, quote_asset, amount, amount_usd, tx_hash, ts) VALUES ($1, $2, $3, $4, $5, now())",
+      [cycleId, config.NOMA_QUOTE_ASSET, amount.toString(), await quoteUsd(amount), claimReceipt.transactionHash],
     );
+    logger.warn({ cycleId, claimed: amount.toString() }, "ACTION Safe owners: swap 50/50 into ZEC + Stock, then record via /admin");
   }
 
-  // 2. split exactly 50/50 and acquire ZEC + Stock of the Week
-  const { rows: sum } = await db.query<{ total: string }>(
-    "SELECT COALESCE(sum(amount), 0) AS total FROM escrow_claims WHERE cycle_id = $1",
+  // B. swaps: recorded by an admin after the owners executed them (automated routing: TODO)
+  const { rows: acquired } = await db.query<{ asset: "ZEC" | "STOCK"; amount_in: string; amount_out: string }>(
+    "SELECT asset, amount_in, amount_out FROM reward_acquisitions WHERE cycle_id = $1",
     [cycleId],
   );
-  const pool = cyclePool(BigInt(sum[0]!.total), 0n);
-  const targets = [
-    { asset: "ZEC", token: config.ZEC_TOKEN_ADDRESS as Address, amountIn: pool.zec },
-    { asset: "STOCK", token: stockToken, amountIn: pool.stock },
-  ] as const;
+  if (acquired.length < 2) return;
 
-  for (const t of targets) {
-    const done = await db.query("SELECT 1 FROM reward_acquisitions WHERE cycle_id = $1 AND asset = $2", [cycleId, t.asset]);
-    if (done.rowCount || t.amountIn === 0n) continue;
-    const { minAmountOut, route } = await quoteSwap(quoteToken(), t.token, t.amountIn);
-    const receipt = await vaultCall(
-      `swap:${cycleId}:${t.asset}`,
-      encodeFunctionData({
-        abi: rewardVaultAbi,
-        functionName: "swap",
-        args: [quoteToken(), t.token, t.amountIn, minAmountOut, route],
-      }),
-    );
-    let amountOut = 0n;
-    for (const log of receipt.logs) {
-      try {
-        const ev = decodeEventLog({ abi: rewardVaultAbi, data: log.data, topics: log.topics });
-        if (ev.eventName === "Swapped") amountOut += ev.args.amountOut;
-      } catch {
-        /* not a vault event */
-      }
+  // C. approve + notifyReward for both assets, as one Safe batch
+  const fund = await liveProposal(cycleId, "fund_staking");
+  if (!fund) {
+    if (!cycle.stock_token_address) throw new Error(`cycle ${cycleId} has no stock token address`);
+    const staking = config.NOMA_STAKING_ADDRESS as Address;
+    const calls: (SafeCall & { label: string })[] = [];
+    for (const a of acquired) {
+      const token = (a.asset === "ZEC" ? config.ZEC_TOKEN_ADDRESS! : cycle.stock_token_address) as Address;
+      const amount = BigInt(a.amount_out);
+      if (amount === 0n) continue;
+      const [listed, active] = await chain().readContract({ address: staking, abi: nomaStakingAbi, functionName: "rewardState", args: [token] });
+      if (!listed || !active) throw new Error(`${a.asset} ${token} is not an active NomaStaking reward asset: ADMIN must addRewardAsset`);
+      const symbol = a.asset === "ZEC" ? "ZEC" : cycle.stock_symbol;
+      calls.push(
+        { label: `approve ${symbol} → NomaStaking`, to: token, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [staking, amount] }) },
+        {
+          label: `NomaStaking.notifyReward(${symbol}, ${amount})`,
+          to: staking,
+          data: encodeFunctionData({ abi: nomaStakingAbi, functionName: "notifyReward", args: [token, amount] }),
+        },
+      );
     }
-    await db.query(
-      `INSERT INTO reward_acquisitions (cycle_id, asset, amount_in, amount_out, tx_hash, ts)
-       VALUES ($1, $2, $3, $4, $5, now())`,
-      [cycleId, t.asset, t.amountIn.toString(), amountOut.toString(), receipt.transactionHash],
-    );
+    return propose(cycleId, "fund_staking", calls);
   }
+  const fundReceipt = await executed(fund, cycleId, "fund_staking");
+  if (!fundReceipt) return;
 
-  // 3. RewardVault approves NomaStaking and calls notifyReward: streamed to stakers over 7 days
-  const { rows: acquired } = await db.query<{ asset: "ZEC" | "STOCK"; amount_in: string; amount_out: string; stock_symbol: string }>(
-    `SELECT a.asset, a.amount_in, a.amount_out, c.stock_symbol FROM reward_acquisitions a
-     JOIN reward_cycles c ON c.id = a.cycle_id WHERE a.cycle_id = $1`,
-    [cycleId],
-  );
+  // RewardAdded rows are written by the staking indexer; attach cycle and USD value (quote spent)
   for (const a of acquired) {
-    const token = (a.asset === "ZEC" ? config.ZEC_TOKEN_ADDRESS! : stockToken).toLowerCase() as Address;
-    const amount = BigInt(a.amount_out);
-    if (amount === 0n) continue;
-    const funded = await db.query("SELECT 1 FROM reward_notifications WHERE cycle_id = $1 AND asset_address = $2", [cycleId, token]);
-    if (funded.rowCount) continue;
-
-    const [listed] = await chain().readContract({
-      address: config.NOMA_STAKING_ADDRESS as Address,
-      abi: nomaStakingAbi,
-      functionName: "rewardState",
-      args: [token],
-    });
-    if (!listed) throw new Error(`${a.asset} token ${token} is not a NomaStaking reward asset: ADMIN must call addRewardAsset`);
-
-    const receipt = await vaultCall(
-      `fund:${cycleId}:${a.asset}`,
-      encodeFunctionData({ abi: rewardVaultAbi, functionName: "fundStaking", args: [token, amount] }),
-    );
+    const token = (a.asset === "ZEC" ? config.ZEC_TOKEN_ADDRESS! : cycle.stock_token_address!).toLowerCase();
     await db.query(
       `INSERT INTO reward_notifications (cycle_id, asset, asset_address, amount, amount_usd, stream_end, tx_hash)
        VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6), $7)
        ON CONFLICT (tx_hash, asset_address) DO UPDATE SET cycle_id = EXCLUDED.cycle_id, amount_usd = EXCLUDED.amount_usd`,
       [
         cycleId,
-        a.asset === "ZEC" ? "ZEC" : a.stock_symbol,
+        a.asset === "ZEC" ? "ZEC" : cycle.stock_symbol,
         token,
-        amount.toString(),
+        a.amount_out,
         await quoteUsd(BigInt(a.amount_in)),
         config.REWARD_STREAM_DURATION,
-        receipt.transactionHash,
+        fundReceipt.transactionHash,
       ],
     );
   }
-
   await db.query("UPDATE reward_cycles SET status = 'distributed' WHERE id = $1", [cycleId]);
   logger.info({ cycleId }, "cycle rewards streaming to stakers");
+}
+
+/** Admin: record the swaps the Safe owners executed. Each side must be half of the claim (±0.5%). */
+export async function recordAcquisitions(
+  cycleId: number,
+  swaps: Record<"ZEC" | "STOCK", { amount_in: string; amount_out: string; tx_hash: Hex }>,
+): Promise<void> {
+  const { rows } = await db.query<{ total: string }>("SELECT COALESCE(sum(amount), 0) AS total FROM escrow_claims WHERE cycle_id = $1", [cycleId]);
+  const claimed = BigInt(rows[0]!.total);
+  if (claimed === 0n) throw new Error("claim not executed yet for this cycle");
+  const half = claimed / 2n;
+  for (const [asset, s] of Object.entries(swaps)) {
+    const amountIn = BigInt(s.amount_in);
+    const diff = amountIn > half ? amountIn - half : half - amountIn;
+    if (diff * 1000n > half * 5n) throw new Error(`${asset} amount_in ${amountIn} is not 50% of the claim (${half})`);
+    const receipt = await chain().getTransactionReceipt({ hash: s.tx_hash });
+    if (receipt.status !== "success" || receipt.to?.toLowerCase() !== safe().toLowerCase()) {
+      throw new Error(`${asset} swap tx ${s.tx_hash} is not a successful Safe transaction`);
+    }
+  }
+  for (const [asset, s] of Object.entries(swaps)) {
+    await db.query(
+      `INSERT INTO reward_acquisitions (cycle_id, asset, amount_in, amount_out, usd_value, tx_hash, ts)
+       VALUES ($1, $2, $3, $4, $5, $6, now()) ON CONFLICT (cycle_id, asset) DO NOTHING`,
+      [cycleId, asset, s.amount_in, s.amount_out, await quoteUsd(BigInt(s.amount_in)), s.tx_hash],
+    );
+  }
 }
