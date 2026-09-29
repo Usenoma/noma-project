@@ -50,13 +50,34 @@ export const ponsSweepAbi = parseAbi([
 ]);
 
 /**
- * Pons V2 trade events — bonding curve (pre-graduation) and V4 singleton hook (post-graduation).
- * TODO: verify event signatures against the deployed Pons V2 contracts before enabling the indexer.
+ * Pons V2 bonding curve (PonsV2BondingCurve.sol, pons-labs contractsV2 @ 4bea1cf).
+ * `fee` is the base trade fee (split protocol / buyback / creator on sweep); `tax` is the creator
+ * tax, paid to the creator in full. Both are quote-denominated and accrue in the curve until swept.
  */
 export const ponsCurveAbi = parseAbi([
-  "event Trade(address indexed trader, bool indexed isBuy, uint256 quoteAmount, uint256 tokenAmount, uint256 creatorFee, uint256 protocolFee)",
+  "event CurveBuy(address indexed buyer, address indexed recipient, uint256 quoteIn, uint256 tokensOut, uint256 fee, uint256 tax)",
+  "event CurveSell(address indexed seller, address indexed recipient, uint256 tokensIn, uint256 quoteOut, uint256 fee, uint256 tax)",
+  "function protocolFeeShareBps() view returns (uint16)",
+  "function quoteFeeBalance() view returns (uint256)",
+  "function creatorTaxBalance() view returns (uint256)",
+  "function graduated() view returns (bool)",
 ]);
 
+/**
+ * Pons V2 V4 singleton hook (hooks/PonsV2MemeHook.sol). HookFeeCollected is emitted per swap in the
+ * swap's unspecified currency, which may be the memecoin; memecoin fees are converted to the quote
+ * asset only when the Pons fee sweep operator sweeps the pool.
+ */
 export const ponsHookAbi = parseAbi([
-  "event FeesCollected(bytes32 indexed poolId, address indexed trader, bool isBuy, uint256 quoteAmount, uint256 creatorFee, uint256 protocolFee)",
+  "event HookFeeCollected(bytes32 indexed poolId, address currency, uint256 feeAmount, uint256 taxAmount)",
+  "function launches(bytes32 poolId) view returns (bool registered, bool memecoinIsCurrency0, address memecoin, address quoteToken, address creator, address buybackCreatorRecipient, address protocolFeeRecipient, uint16 creatorTaxBps, uint16 protocolFeeShareBps, uint16 buybackBurnBps, uint16 hookFeeBps, uint16 maxInternalPriceImpactBps, bool buybackEnabled)",
+  "function pendingFees(bytes32 poolId, address currency) view returns (uint256)",
+  "function pendingCreatorTax(bytes32 poolId, address currency) view returns (uint256)",
+]);
+
+/** Pons V2 launch factory: its owner can redirect a launch's creator fees after a 3-day timelock. */
+export const ponsFactoryAbi = parseAbi([
+  "event CreatorFeeRecipientChangeProposed(address indexed token, address indexed currentRecipient, address indexed proposedRecipient, uint256 effectiveAt, uint256 expiresAt)",
+  "event CreatorFeeRecipientChangeCancelled(address indexed token, address indexed proposedRecipient)",
+  "event CreatorFeeRecipientUpdated(address indexed token, address indexed previousRecipient, address indexed newRecipient)",
 ]);

@@ -5,7 +5,7 @@ import { decrypt, encrypt, generateOrderKey, hashOrderKey, verifyOrderKey } from
 import { verifyWalletAuth, walletAuthMessage } from "../src/lib/walletAuth.js";
 import { applyMarkup } from "../src/modules/catalog/pricing.js";
 import { usdToUnits } from "../src/modules/payments/units.js";
-import { cyclePool } from "../src/modules/rewards/poolMath.js";
+import { creatorFeeShare, cyclePool, pendingCreatorPayout } from "../src/modules/rewards/poolMath.js";
 import { allowedFrom, canTransition } from "../src/modules/orders/status.js";
 import { depositAddress } from "../src/chain/depositAddress.js";
 import { combineQuotes } from "../src/modules/payments/priceFeed.js";
@@ -35,6 +35,17 @@ describe("reward pool math", () => {
     expect(cyclePool(7n, 4n)).toEqual({ total: 11n, zec: 5n, stock: 6n });
     const p = cyclePool(10n ** 18n, 1n);
     expect(p.zec + p.stock).toBe(p.total);
+    expect(cyclePool(7n, 4n, 3n).total).toBe(14n);
+  });
+
+  it("matches the Pons creator split (1% fee, 30% protocol share, 1% tax)", () => {
+    // 1 ETH trade: fee 0.01, tax 0.01 → creator 0.007 + 0.01
+    const fee = 10n ** 16n;
+    expect(creatorFeeShare(fee, 3000n)).toBe(7n * 10n ** 15n);
+    expect(pendingCreatorPayout(fee, fee, 3000n)).toBe(17n * 10n ** 15n);
+    // protocol share rounds down, so the creator keeps the odd unit (as in Pons _sweepFees)
+    expect(creatorFeeShare(7n, 3000n)).toBe(5n);
+    expect(pendingCreatorPayout(0n, 0n, 3000n)).toBe(0n);
   });
 });
 

@@ -7,6 +7,10 @@ export interface LivePool {
   quote_asset: string;
   claimed: string;
   claimable: string;
+  /** creator payout not yet swept from the Pons curve/hook into the escrow */
+  pending: string;
+  /** hook fees still in the memecoin (converted to quote only by the Pons sweep operator) */
+  pending_memecoin: string;
   total: string;
   zec: string;
   stock: string;

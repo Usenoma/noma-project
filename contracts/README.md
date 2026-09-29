@@ -53,3 +53,25 @@ Result on 2026-09-29 (fork of block ~75.5M): Safe 2-of-2 created through the can
 factory; the backend's safeTxHash matched the mainnet Safe contract; MultiSend approve +
 notifyReward executed (169k gas); stake 113k gas, claimAll 168k, requestUnstake 83k, withdraw 66k;
 withdraw before cooldown reverted; staker received the full 7-day stream.
+
+### Pons V2 launch rehearsal
+
+The deployed Pons V2 contracts need Cancun (a Shanghai fork fails with `NotActivated`). Anvil can
+fork with `--hardfork cancun` as long as one local block is mined before the first call (the forked
+Arbitrum head has no blob gas; the script does this):
+
+```bash
+anvil --fork-url https://rpc.mainnet.chain.robinhood.com --chain-id 4663 --hardfork cancun --port 58645
+# from ../backend, against a fresh migrated database:
+DATABASE_URL=postgres://…/noma_fork FORK_RPC=http://127.0.0.1:58645 npx tsx --env-file=.env scripts/pons-fork-rehearsal.ts
+```
+
+Result on 2026-09-29 (fork of block ~75.66M): public launches open; launch config 0 = 1% base
+fee, 4.2 ETH graduation, 0.0005 ETH launch fee. Launched through the real factory with the Safe as
+creator fee recipient, 1% creator tax, buyback off (3.51M gas). Two buys + one sell were indexed
+from `CurveBuy` / `CurveSell` with block timestamps; indexed fees and taxes equal the curve's
+pending balances; the live pool counted the pending creator payout; a factory-owner recipient
+change raised the ALERT. The Safe swept the curve itself and claimed from the Fee Escrow in one
+MultiSend (158k gas): `FeesSwept.creatorAmount` and the ETH received by the Safe both equalled the
+predicted payout (0.7% base-fee share + 1% tax of volume). The V4 hook path (post-graduation) is
+not rehearsed yet.

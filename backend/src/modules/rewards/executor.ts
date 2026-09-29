@@ -84,7 +84,7 @@ async function executed(p: Proposal, cycleId: number, kind: Kind) {
 }
 
 /** Include a Pons sweep only if the Safe is allowed to run it right now (simulated from the Safe). */
-async function sweepCalls(): Promise<(SafeCall & { label: string })[]> {
+export async function sweepCalls(): Promise<(SafeCall & { label: string })[]> {
   const candidates: (SafeCall & { label: string })[] = [];
   if (config.NOMA_BONDING_CURVE) {
     candidates.push({
