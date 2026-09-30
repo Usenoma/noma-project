@@ -1,5 +1,9 @@
 import { writeFile } from "node:fs/promises";
+import { formatUnits, type Address, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { chain, chainConfigured } from "../../chain/client.js";
+import { erc20Abi } from "../../chain/abis/index.js";
+import { config } from "../../config.js";
 import { db } from "../../db/pool.js";
 import { alert } from "../../lib/alerts.js";
 import { redis } from "../../redis.js";
@@ -39,6 +43,24 @@ export function quietSeconds(lastRunMs: number | null, nowMs: number, processSta
   return (nowMs - since) / 1000;
 }
 
+/** Refunds are paid from the refund hot wallet; an empty one makes every refund job fail. */
+async function checkRefundWallet(): Promise<void> {
+  if (!config.REFUND_PRIVATE_KEY) return;
+  const wallet = privateKeyToAccount(config.REFUND_PRIVATE_KEY as Hex).address;
+  const eth = Number(formatUnits(await chain().getBalance({ address: wallet }), 18));
+  const usdc = config.USDC_ADDRESS
+    ? Number(formatUnits(await chain().readContract({ address: config.USDC_ADDRESS as Address, abi: erc20Abi, functionName: "balanceOf", args: [wallet] }), 6))
+    : null;
+  const low = eth < config.REFUND_WALLET_MIN_ETH || (usdc !== null && usdc < config.REFUND_WALLET_MIN_USDC);
+  if (low) {
+    await alert(
+      "refund hot wallet low: top it up from the treasury",
+      { wallet, eth, usdc, min_eth: config.REFUND_WALLET_MIN_ETH, min_usdc: config.REFUND_WALLET_MIN_USDC },
+      { key: "refund-wallet-low", cooldownSeconds: 6 * 3600 },
+    );
+  }
+}
+
 /** Periodic health checks (workers, every minute). Each failing check raises its own alert. */
 export async function checkHealth(): Promise<void> {
   const now = Date.now();
@@ -65,6 +87,9 @@ export async function checkHealth(): Promise<void> {
     } catch (err) {
       await alert("chain RPC unreachable", { err: String(err).slice(0, 200) }, { key: "rpc-unreachable", cooldownSeconds: 30 * 60 });
     }
+    await checkRefundWallet().catch((err) =>
+      alert("refund wallet check failed", { err: String(err).slice(0, 200) }, { key: "refund-wallet-check", cooldownSeconds: 6 * 3600 }),
+    );
   }
 
   const { rows } = await db.query<{ failed: number; done: number }>(

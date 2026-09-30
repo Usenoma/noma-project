@@ -35,6 +35,9 @@ const schema = z.object({
   OVERPAY_REFUND_MIN_USD: z.coerce.number().min(0).default(0.5),
 
   REFUND_PRIVATE_KEY: optionalString,
+  // refund hot wallet float: alert below these (ETH also pays the gas of USDC refunds)
+  REFUND_WALLET_MIN_ETH: z.coerce.number().min(0).default(0.02),
+  REFUND_WALLET_MIN_USDC: z.coerce.number().min(0).default(100),
 
   // Deposit sweeper (separate process, src/sweeper/main.ts). PAYMENT_XPRV is the private
   // counterpart of PAYMENT_XPUB and must only ever be configured for the sweeper.
