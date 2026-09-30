@@ -12,7 +12,8 @@ if (!id) {
 
 try {
   const a = adapter(id);
-  console.log(`${a.name}: balance $${(await a.balance()).toFixed(2)}`);
+  const balance = await a.balance();
+  console.log(`${a.name}: balance ${balance === null ? "not exposed by the API" : `$${balance.toFixed(2)}`}`);
   const products = await a.syncCatalog();
   const inRegion = region ? products.filter((p) => p.region === region.toUpperCase()) : products;
   console.log(`products: ${products.length}${region ? ` | in ${region.toUpperCase()}: ${inRegion.length}` : ""}`);

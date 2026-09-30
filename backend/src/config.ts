@@ -85,6 +85,7 @@ const schema = z.object({
   CRYPTOREFILLS_KEY: optionalString,
   BITLAUNCH_KEY: optionalString,
   VPNRESELLERS_KEY: optionalString,
+  VPNRESELLERS_MONTHLY_USD: z.coerce.number().positive().default(1.99), // per active account (no price API)
   IPROYAL_KEY: optionalString,
   OPENROUTER_PROVISIONING_KEY: optionalString,
 });

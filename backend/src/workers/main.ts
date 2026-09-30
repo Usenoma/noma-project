@@ -21,6 +21,7 @@ async function supplierBalances() {
   for (const a of adapters()) {
     try {
       const balance = await a.balance();
+      if (balance === null) continue; // not exposed by this supplier
       const { rows } = await db.query<{ balance_alert_usd: string | null }>(
         "UPDATE suppliers SET balance_usd = $2, updated_at = now() WHERE id = $1 RETURNING balance_alert_usd",
         [a.id, balance],

@@ -49,7 +49,8 @@ export interface SupplierAdapter {
   ): Promise<{ supplierOrderId: string; deliverable?: Deliverable }>;
   status(supplierOrderId: string): Promise<SupplierStatus>;
   deliverable(supplierOrderId: string): Promise<Deliverable>;
-  balance(): Promise<number>;
+  /** Prepaid balance in USD, or null when the supplier API does not expose it. */
+  balance(): Promise<number | null>;
   /** Time-limited products (e.g. VPS rentals): tear down the resource when the rental ends. */
   release?(supplierOrderId: string): Promise<void>;
 }

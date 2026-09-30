@@ -4,16 +4,18 @@ import { encryptionKey } from "../lib/keys.js";
 import { createBitLaunchAdapter } from "./bitlaunch.js";
 import { createBitrefillAdapter } from "./bitrefill.js";
 import { createEsimAccessAdapter } from "./esimaccess.js";
+import { createIpRoyalAdapter } from "./iproyal.js";
 import { createMockEsimAdapter } from "./mock.js";
 import { createOpenRouterAdapter } from "./openrouter.js";
 import type { SupplierAdapter } from "./types.js";
+import { createVpnResellersAdapter } from "./vpnresellers.js";
 
-/** Separate subkey so VPS root passwords are not derived from the raw encryption key. */
-const bitlaunchPasswordSecret = () => createHmac("sha256", encryptionKey).update("noma/bitlaunch-password/v1").digest();
+/** Separate subkeys so supplier passwords are not derived from the raw encryption key. */
+const passwordSecret = (purpose: string) => createHmac("sha256", encryptionKey).update(`noma/${purpose}-password/v1`).digest();
 
 /**
  * Adapters are registered only when their credentials are present.
- * TODO: Cryptorefills, VPNResellers, IPRoyal.
+ * TODO: Cryptorefills.
  */
 function build(): Map<string, SupplierAdapter> {
   const adapters: SupplierAdapter[] = [];
@@ -26,7 +28,11 @@ function build(): Map<string, SupplierAdapter> {
       }),
     );
   }
-  if (config.BITLAUNCH_KEY) adapters.push(createBitLaunchAdapter(config.BITLAUNCH_KEY, bitlaunchPasswordSecret()));
+  if (config.BITLAUNCH_KEY) adapters.push(createBitLaunchAdapter(config.BITLAUNCH_KEY, passwordSecret("bitlaunch")));
+  if (config.VPNRESELLERS_KEY) {
+    adapters.push(createVpnResellersAdapter(config.VPNRESELLERS_KEY, passwordSecret("vpnresellers"), { monthlyUsd: config.VPNRESELLERS_MONTHLY_USD }));
+  }
+  if (config.IPROYAL_KEY) adapters.push(createIpRoyalAdapter(config.IPROYAL_KEY, passwordSecret("iproyal")));
   if (config.OPENROUTER_PROVISIONING_KEY) adapters.push(createOpenRouterAdapter(config.OPENROUTER_PROVISIONING_KEY));
   if (config.NODE_ENV !== "production") adapters.push(createMockEsimAdapter());
   return new Map(adapters.map((a) => [a.id, a]));
