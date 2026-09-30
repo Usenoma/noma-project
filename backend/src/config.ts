@@ -74,7 +74,7 @@ const schema = z.object({
   MEMECOIN_FEES_PENDING_ALERT_HOURS: z.coerce.number().positive().default(48),
 
   LLM_API_KEY: optionalString,
-  LLM_MODEL: z.string().default("claude-opus-5"),
+  LLM_MODEL: z.string().default("claude-opus-5-5"),
 
   ESIMACCESS_KEY: optionalString,
   BITREFILL_KEY: optionalString,
