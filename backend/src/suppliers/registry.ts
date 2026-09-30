@@ -13,10 +13,7 @@ import { createVpnResellersAdapter } from "./vpnresellers.js";
 /** Separate subkeys so supplier passwords are not derived from the raw encryption key. */
 const passwordSecret = (purpose: string) => createHmac("sha256", encryptionKey).update(`noma/${purpose}-password/v1`).digest();
 
-/**
- * Adapters are registered only when their credentials are present.
- * TODO: Cryptorefills.
- */
+/** Adapters are registered only when their credentials are present. */
 function build(): Map<string, SupplierAdapter> {
   const adapters: SupplierAdapter[] = [];
   if (config.ESIMACCESS_KEY) adapters.push(createEsimAccessAdapter(config.ESIMACCESS_KEY));

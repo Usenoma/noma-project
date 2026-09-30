@@ -82,7 +82,6 @@ const schema = z.object({
     .string()
     .default("US,XI")
     .transform((v) => v.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean)),
-  CRYPTOREFILLS_KEY: optionalString,
   BITLAUNCH_KEY: optionalString,
   VPNRESELLERS_KEY: optionalString,
   VPNRESELLERS_MONTHLY_USD: z.coerce.number().positive().default(1.99), // per active account (no price API)
