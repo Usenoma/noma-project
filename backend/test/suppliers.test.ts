@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { config } from "../src/config.js";
+import { createBitrefillAdapter } from "../src/suppliers/bitrefill.js";
+import { createEsimAccessAdapter } from "../src/suppliers/esimaccess.js";
 import { createIpRoyalAdapter } from "../src/suppliers/iproyal.js";
 import { createVpnResellersAdapter } from "../src/suppliers/vpnresellers.js";
+import { webhookToken, webhookTokenMatches, webhookUrl } from "../src/suppliers/webhooks.js";
 
 /**
  * Fake supplier APIs built from the documented request/response shapes (VPNresellers v3.2,
@@ -184,5 +188,41 @@ describe("IPRoyal adapter", () => {
     expect(calls[0]!.headers["X-Access-Token"]).toBe("tok");
     fakeFetch([on("GET", /\/reseller\/balance$/, () => [401, { message: "Unauthenticated." }])]);
     expect(await createIpRoyalAdapter("tok", secret).balance()).toBeNull();
+  });
+});
+
+describe("supplier webhooks", () => {
+  afterEach(() => {
+    config.PUBLIC_API_URL = undefined;
+  });
+
+  it("derives a distinct URL secret per supplier and builds URLs only with a public base URL", () => {
+    expect(webhookUrl("bitrefill", ORDER)).toBeUndefined();
+    config.PUBLIC_API_URL = "https://api.example.com/";
+    const token = webhookToken("bitrefill");
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    expect(token).not.toBe(webhookToken("esimaccess"));
+    expect(webhookUrl("bitrefill", ORDER)).toBe(`https://api.example.com/webhooks/suppliers/bitrefill/${token}?order=${ORDER}`);
+    expect(webhookTokenMatches("bitrefill", token)).toBe(true);
+    expect(webhookTokenMatches("esimaccess", token)).toBe(false);
+    expect(webhookTokenMatches("bitrefill", "short")).toBe(false);
+  });
+
+  it("eSIM Access: only order notifications name an order", () => {
+    const a = createEsimAccessAdapter("code:secret");
+    expect(a.webhookOrderId!({ notifyType: "ORDER_STATUS", content: { orderNo: "B23110718759768", orderStatus: "GOT_RESOURCE" } })).toBe("B23110718759768");
+    expect(a.webhookOrderId!({ notifyType: "ORDER_STATUS", "content[orderNo]": "B1" })).toBe("B1");
+    expect(a.webhookOrderId!({ notifyType: "DATA_USAGE", content: { orderNo: "B1" } })).toBeNull();
+    expect(a.webhookOrderId!({ notifyType: "ORDER_STATUS", content: { orderNo: 5 } })).toBeNull();
+    expect(a.webhookOrderId!({})).toBeNull();
+  });
+
+  it("Bitrefill: the invoice carries a per-order webhook URL when one is configured", async () => {
+    const calls = fakeFetch([on("POST", /\/invoices$/, () => [200, { data: { id: "inv1", status: "unpaid" } }])]);
+    const opts = { countries: ["US"], includeTestProducts: false };
+    await createBitrefillAdapter("key", opts).purchase("prod|pkg", {}, ORDER);
+    expect(calls[0]!.body).not.toHaveProperty("webhook_url");
+    await createBitrefillAdapter("key", { ...opts, webhookUrl: (id) => `https://api.example.com/hook?order=${id}` }).purchase("prod|pkg", {}, ORDER);
+    expect(calls[1]!.body).toMatchObject({ auto_pay: false, webhook_url: `https://api.example.com/hook?order=${ORDER}` });
   });
 });

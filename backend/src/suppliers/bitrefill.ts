@@ -62,6 +62,8 @@ export interface BitrefillOptions {
   /** ISO alpha-2 list; "XI" = international. Keeps catalog sync inside the 1000/h product quota. */
   countries: string[];
   includeTestProducts: boolean;
+  /** Per-order URL Bitrefill calls when the invoice changes (carries our order id, payload unused). */
+  webhookUrl?: (orderId: string) => string | undefined;
 }
 
 /**
@@ -166,12 +168,14 @@ export function createBitrefillAdapter(credentials: string, opts: BitrefillOptio
       return { costUsd: pkg.price * (await usdPerUnit()) };
     },
 
-    async purchase(sku) {
+    async purchase(sku, _fields, idempotencyKey) {
       const [productId, pid] = sku.split("|");
+      const webhookUrl = opts.webhookUrl?.(idempotencyKey);
       const { data } = await call<Page<BrInvoice>>("POST", "/invoices", {
         products: [{ product_id: productId, package_id: pid, quantity: 1 }],
         payment_method: "balance",
         auto_pay: false,
+        ...(webhookUrl ? { webhook_url: webhookUrl } : {}),
       });
       return { supplierOrderId: data.id };
     },

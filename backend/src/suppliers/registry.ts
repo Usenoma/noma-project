@@ -9,6 +9,7 @@ import { createMockEsimAdapter } from "./mock.js";
 import { createOpenRouterAdapter } from "./openrouter.js";
 import type { SupplierAdapter } from "./types.js";
 import { createVpnResellersAdapter } from "./vpnresellers.js";
+import { webhookUrl } from "./webhooks.js";
 
 /** Separate subkeys so supplier passwords are not derived from the raw encryption key. */
 const passwordSecret = (purpose: string) => createHmac("sha256", encryptionKey).update(`noma/${purpose}-password/v1`).digest();
@@ -22,6 +23,7 @@ function build(): Map<string, SupplierAdapter> {
       createBitrefillAdapter(config.BITREFILL_KEY, {
         countries: config.BITREFILL_COUNTRIES,
         includeTestProducts: config.NODE_ENV !== "production",
+        webhookUrl: (orderId) => webhookUrl("bitrefill", orderId),
       }),
     );
   }

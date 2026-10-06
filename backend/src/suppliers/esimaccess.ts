@@ -181,5 +181,12 @@ export function createEsimAccessAdapter(credentials: string): SupplierAdapter {
       const obj = await call<{ balance: number }>("/balance/query", {});
       return obj.balance / MONEY_UNIT;
     },
+
+    // { notifyType: "ORDER_STATUS", content: { orderNo, orderStatus } }; usage/validity notices are ignored
+    webhookOrderId(payload) {
+      if (payload.notifyType !== "ORDER_STATUS") return null;
+      const orderNo = (payload.content as { orderNo?: unknown } | undefined)?.orderNo ?? payload["content[orderNo]"];
+      return typeof orderNo === "string" && orderNo ? orderNo : null;
+    },
   };
 }

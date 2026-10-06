@@ -10,6 +10,7 @@ import { agentRoutes } from "./routes/agent.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { orderRoutes } from "./routes/orders.js";
 import { publicRewardRoutes } from "./routes/rewards.js";
+import { webhookRoutes } from "./routes/webhooks.js";
 
 export function buildServer(): FastifyInstance {
   const app = Fastify({
@@ -17,6 +18,15 @@ export function buildServer(): FastifyInstance {
       level: config.LOG_LEVEL,
       // never log credentials
       redact: ["req.headers.authorization", 'req.headers["x-order-key"]', 'req.headers["x-wallet-signature"]'],
+      serializers: {
+        // supplier webhook URLs carry their secret in the path
+        req: (req) => ({
+          method: req.method,
+          url: req.url.replace(/(\/webhooks\/suppliers\/[^/]+\/)[^/?]+/, "$1[redacted]"),
+          host: req.host,
+          remoteAddress: req.ip,
+        }),
+      },
     },
     trustProxy: true,
   });
@@ -44,6 +54,7 @@ export function buildServer(): FastifyInstance {
   app.register(orderRoutes);
   app.register(publicRewardRoutes);
   app.register(agentRoutes);
+  app.register(webhookRoutes);
   app.register(adminRoutes, { prefix: "/admin" });
 
   return app;

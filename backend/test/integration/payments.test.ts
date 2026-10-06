@@ -5,16 +5,18 @@ import { privateKeyToAccount } from "viem/accounts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { config } from "../../src/config.js";
 import { robinhoodChain } from "../../src/chain/client.js";
+import { buildServer } from "../../src/api/server.js";
 import { erc20Abi } from "../../src/chain/abis/index.js";
 import { db } from "../../src/db/pool.js";
 import { redis } from "../../src/redis.js";
-import { closeQueues } from "../../src/queues.js";
+import { closeQueues, QUEUE, queue } from "../../src/queues.js";
 import { syncSupplierCatalog } from "../../src/modules/catalog/service.js";
-import { fulfill } from "../../src/modules/fulfillment/service.js";
+import { fulfill, NUDGE_JOB, nudgeFulfillment } from "../../src/modules/fulfillment/service.js";
 import { createOrder } from "../../src/modules/orders/service.js";
 import { watchPayments } from "../../src/modules/payments/watcher.js";
 import { processRefund } from "../../src/modules/refunds/service.js";
 import { createMockEsimAdapter } from "../../src/suppliers/mock.js";
+import { webhookToken } from "../../src/suppliers/webhooks.js";
 import { TEST_USDC_BYTECODE } from "../contracts/testUsdc.js";
 
 const USDC = config.USDC_ADDRESS as Address;
@@ -230,5 +232,48 @@ describe("payment watcher on a real chain", () => {
       await expect(newOrder("ETH")).rejects.toThrow(/temporarily unavailable/);
       await redis.set("price:ETH", "3000");
     });
+  });
+});
+
+describe("supplier webhooks", () => {
+  const app = buildServer();
+  const hook = (token: string, query = "") => app.inject({ method: "POST", url: `/webhooks/suppliers/mock-esim/${token}${query}`, payload: {} });
+  const nudgeJob = (orderId: string) => queue(QUEUE.fulfillment).getJob(`nudge-${orderId}`);
+
+  afterAll(() => app.close());
+
+  it("re-checks an order that is still being fulfilled, and only that", async () => {
+    const o = await newOrder();
+    await pay(o.payTo, o.amount);
+    await watchPayments();
+    const token = webhookToken("mock-esim");
+
+    expect((await hook("0".repeat(64), `?order=${o.orderId}`)).statusCode).toBe(404);
+    expect((await app.inject({ method: "POST", url: `/webhooks/suppliers/nope/${token}` })).statusCode).toBe(404);
+
+    // paid but not yet handed to the supplier: nothing to re-check
+    expect((await hook(token, `?order=${o.orderId}`)).statusCode).toBe(200);
+    expect(await nudgeJob(o.orderId)).toBeUndefined();
+
+    await db.query("UPDATE orders SET status = 'fulfilling' WHERE id = $1", [o.orderId]);
+    await db.query("INSERT INTO fulfillments (order_id, supplier_id, idempotency_key, supplier_order_id) VALUES ($1, 'mock-esim', $2, 'sup-1')", [o.orderId, o.orderId]);
+    expect(await nudgeFulfillment("mock-esim", { supplierOrderId: "other" })).toBe(false);
+    expect(await nudgeFulfillment("bitrefill", { supplierOrderId: "sup-1" })).toBe(false);
+
+    // a form-encoded body is accepted and ignored
+    const res = await app.inject({
+      method: "POST",
+      url: `/webhooks/suppliers/mock-esim/${token}?order=${o.orderId}`,
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: "status=complete",
+    });
+    expect(res.statusCode).toBe(200);
+    const job = await nudgeJob(o.orderId);
+    expect(job).toMatchObject({ name: NUDGE_JOB, data: { orderId: o.orderId }, opts: { attempts: 1 } });
+    expect(await nudgeFulfillment("mock-esim", { supplierOrderId: "sup-1" })).toBe(true); // same job, not a second one
+    await job!.remove();
+
+    await db.query("UPDATE orders SET status = 'delivered' WHERE id = $1", [o.orderId]);
+    expect(await nudgeFulfillment("mock-esim", { orderId: o.orderId })).toBe(false);
   });
 });

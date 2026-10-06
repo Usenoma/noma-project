@@ -2,6 +2,7 @@ import { db, tx } from "../../db/pool.js";
 import { decryptJson, encryptJson } from "../../lib/crypto.js";
 import { encryptionKey } from "../../lib/keys.js";
 import { logger } from "../../lib/logger.js";
+import { QUEUE, queue } from "../../queues.js";
 import { adapter } from "../../suppliers/registry.js";
 import type { Deliverable } from "../../suppliers/types.js";
 import { transition } from "../orders/service.js";
@@ -108,6 +109,32 @@ async function fulfillLocked(orderId: string): Promise<void> {
   if (status === "pending") throw new SupplierPendingError(`supplier order ${supplierOrderId} pending`);
   if (status === "failed") throw new Error(`supplier order ${supplierOrderId} failed`);
   await storeDeliverable(orderId, await supplier.deliverable(supplierOrderId), lifetimeFor(supplierOrderId));
+}
+
+/** Extra fulfillment pass triggered by a supplier webhook; never counts against the order's retries. */
+export const NUDGE_JOB = "fulfill-nudge";
+
+/**
+ * A supplier says an order changed: run fulfill() now instead of waiting for the next backoff retry.
+ * Only orders still being fulfilled at that supplier match. The pass is a separate one-shot job, so
+ * the order's own job keeps its attempts and stays the only one that can fail the order.
+ */
+export async function nudgeFulfillment(supplierId: string, ref: { orderId: string } | { supplierOrderId: string }): Promise<boolean> {
+  const byOrder = "orderId" in ref;
+  const { rows } = await db.query<{ order_id: string }>(
+    `SELECT f.order_id FROM fulfillments f JOIN orders o ON o.id = f.order_id
+     WHERE f.supplier_id = $1 AND o.status = 'fulfilling' AND ${byOrder ? "f.order_id = $2" : "f.supplier_order_id = $2"}`,
+    [supplierId, byOrder ? ref.orderId : ref.supplierOrderId],
+  );
+  const orderId = rows[0]?.order_id;
+  if (!orderId) return false;
+  await queue(QUEUE.fulfillment).add(
+    NUDGE_JOB,
+    { orderId },
+    // one queued nudge per order; removed when it ends so a later notification can queue again
+    { jobId: `nudge-${orderId}`, attempts: 1, removeOnComplete: true, removeOnFail: true },
+  );
+  return true;
 }
 
 /** Called when the fulfillment job has exhausted its retries. */

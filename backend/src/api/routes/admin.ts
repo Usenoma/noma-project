@@ -14,6 +14,8 @@ import {
   suppliers,
 } from "../../modules/admin/service.js";
 import { recordAcquisitions } from "../../modules/rewards/executor.js";
+import { adapters } from "../../suppliers/registry.js";
+import { webhookUrl } from "../../suppliers/webhooks.js";
 
 const pct = z.number().min(0).max(5);
 const markupBody = z
@@ -54,6 +56,15 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get("/suppliers", async () => ({ suppliers: await suppliers() }));
+
+  // URLs to register in the dashboards of suppliers that take one account-wide webhook
+  app.get("/webhooks", async () => ({
+    webhooks: Object.fromEntries(
+      adapters()
+        .filter((a) => a.webhookOrderId)
+        .map((a) => [a.id, webhookUrl(a.id) ?? null]),
+    ),
+  }));
 
   app.patch("/suppliers/:id", async (req) => {
     const { id } = z.object({ id: z.string() }).parse(req.params);

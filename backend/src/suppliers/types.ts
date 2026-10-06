@@ -51,6 +51,11 @@ export interface SupplierAdapter {
   deliverable(supplierOrderId: string): Promise<Deliverable>;
   /** Prepaid balance in USD, or null when the supplier API does not expose it. */
   balance(): Promise<number | null>;
+  /**
+   * Supplier order id a webhook notification is about, or null to ignore it. The payload is
+   * untrusted: it only selects which order gets re-checked through status().
+   */
+  webhookOrderId?(payload: Record<string, unknown>): string | null;
   /** Time-limited products (e.g. VPS rentals): tear down the resource when the rental ends. */
   release?(supplierOrderId: string): Promise<void>;
 }

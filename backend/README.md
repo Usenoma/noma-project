@@ -50,6 +50,13 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
 | Bitrefill | `BITREFILL_KEY=<apiId>:<secret>` (Business) or `<apiKey>` (Personal), `BITREFILL_COUNTRIES` | unpaid invoice first, paid from `status()` (no idempotency key); catalog every 6 h |
 | BitLaunch | `BITLAUNCH_KEY` | 30-day VPS; server name `noma-<order>` as dedup key; `resource-expiry` deletes it |
 | OpenRouter | `OPENROUTER_PROVISIONING_KEY` | provisioned API key with credit limit, returned at purchase |
+| VPNresellers | `VPNRESELLERS_KEY`, `VPNRESELLERS_MONTHLY_USD` | one account per order with a supplier-side expiry; tested against fakes only |
+| IPRoyal | `IPROYAL_KEY` | residential sub-user per order; static ISP/datacenter proxies not offered yet |
+
+**Webhooks** (optional, need `PUBLIC_API_URL`): a supplier notification only makes the order's
+status be re-read right away through the supplier API; the payload is never trusted and polling keeps
+working without it. Bitrefill gets a per-invoice URL automatically. For eSIM Access, register the URL
+from `GET /admin/webhooks` in their console. The URL contains a secret: treat it like a key.
 
 ## Payments
 
@@ -58,11 +65,12 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
   within 24 h after expiry are refunded in full. Payer = ERC-20 Transfer sender, or for native ETH the
   sender found by binary-searching the deposit balance.
 
-## Not done yet (TODO in code)
+## Not done yet
 
-- Pons V2 ABIs/event signatures (`src/chain/abis`), fee sweep before claim — see Pons V2 notes.
+Full list with what blocks each item: `../backend.md` §14.
+
 - Automated 50/50 swap proposals (DEX routing on Robinhood Chain); today the Safe owners swap and an admin
   records it via `POST /admin/cycles/:id/acquisitions`. A RewardVault contract may later replace the Safe.
-- Sweeping deposit addresses into treasury (separate signer holding the xprv).
-- Adapters: Cryptorefills, VPNResellers, IPRoyal. Bitrefill range-denominated products, phone top-ups.
-- Webhooks from suppliers (currently polling).
+- IPRoyal static ISP/datacenter proxies (credential format undocumented: needs one real order).
+- OpenRouter: resale terms and request/response shapes unconfirmed (no key yet).
+- No real supplier purchase or mainnet payment has been run yet.

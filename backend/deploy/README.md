@@ -78,6 +78,13 @@ healthy, `/ready` 503 while workers were stopped and 200 after restart, HSTS/nos
 a restored backup matched the live database (5219 products, 6 migrations), and the API refused to
 start with `PAYMENT_XPRV` set.
 
+## Supplier webhooks (optional)
+
+Set `PUBLIC_API_URL=https://$DOMAIN` in `noma.env`. Bitrefill invoices then carry their own
+webhook URL; for eSIM Access, register the URL from `GET /admin/webhooks` in their console. The URLs
+contain a secret (derived from `ENCRYPTION_KEY`), so keep them out of tickets and chats. Without
+this, suppliers are polled and nothing else changes.
+
 ## Admin endpoints
 
 `/admin/*` always requires `ADMIN_TOKEN`. `ADMIN_ALLOW_CIDR` in `compose.env` additionally limits

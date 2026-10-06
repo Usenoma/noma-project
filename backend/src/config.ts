@@ -76,6 +76,10 @@ const schema = z.object({
   LLM_API_KEY: optionalString,
   LLM_MODEL: z.string().default("claude-opus-5-5"),
 
+  // Public base URL of this API (e.g. https://api.example.com). Enables supplier webhooks, which
+  // only speed up fulfillment; without it suppliers are polled.
+  PUBLIC_API_URL: z.preprocess(blankToUndefined, z.string().url().optional()),
+
   ESIMACCESS_KEY: optionalString,
   BITREFILL_KEY: optionalString,
   BITREFILL_COUNTRIES: z
