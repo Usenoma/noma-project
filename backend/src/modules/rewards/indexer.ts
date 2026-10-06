@@ -6,24 +6,12 @@ import { db, getCursor, setCursor, tx } from "../../db/pool.js";
 import { alert } from "../../lib/alerts.js";
 import { logger } from "../../lib/logger.js";
 import { redis } from "../../redis.js";
-import { usdPrice, type PayAsset } from "../payments/assets.js";
 import { creatorFeeShare, cyclePool, pendingCreatorPayout } from "./poolMath.js";
+import { isEthQuote, quoteUsd } from "./quoteAsset.js";
 import { activeCycle, livePoolKey } from "./service.js";
 
 const CURSOR = "reward-indexer";
 const MAX_RANGE = 2_000n;
-const QUOTE_DECIMALS = 18; // TODO: read from pair token if NOMA_QUOTE_ASSET is not ETH
-
-const isEthQuote = () => config.NOMA_QUOTE_ASSET === "ETH";
-
-async function quoteUsd(raw: bigint): Promise<string | null> {
-  try {
-    const price = await usdPrice(config.NOMA_QUOTE_ASSET as PayAsset);
-    return ((Number(raw) / 10 ** QUOTE_DECIMALS) * price).toFixed(6);
-  } catch {
-    return null;
-  }
-}
 
 interface Accrual {
   source: "pons_curve" | "pons_v4_hook";

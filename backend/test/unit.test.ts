@@ -6,6 +6,7 @@ import { verifyWalletAuth, walletAuthMessage } from "../src/lib/walletAuth.js";
 import { applyMarkup } from "../src/modules/catalog/pricing.js";
 import { usdToUnits } from "../src/modules/payments/units.js";
 import { creatorFeeShare, cyclePool, pendingCreatorPayout } from "../src/modules/rewards/poolMath.js";
+import { rawToUsd } from "../src/modules/rewards/quoteAsset.js";
 import { allowedFrom, canTransition } from "../src/modules/orders/status.js";
 import { depositAddress } from "../src/chain/depositAddress.js";
 import { combineQuotes } from "../src/modules/payments/priceFeed.js";
@@ -48,6 +49,11 @@ describe("reward pool math", () => {
     // protocol share rounds down, so the creator keeps the odd unit (as in Pons _sweepFees)
     expect(creatorFeeShare(7n, 3000n)).toBe(5n);
     expect(pendingCreatorPayout(0n, 0n, 3000n)).toBe(0n);
+  });
+
+  it("values the quote asset with its own decimals", () => {
+    expect(rawToUsd(17n * 10n ** 15n, 18, 3000)).toBe("51.000000"); // 0.017 ETH
+    expect(rawToUsd(51_000_000n, 6, 1)).toBe("51.000000"); // a 6-decimal pair token such as USDC
   });
 });
 

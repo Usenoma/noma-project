@@ -1,4 +1,4 @@
-import { encodeFunctionData, parseEventLogs, zeroAddress, type Address, type Hex } from "viem";
+import { encodeFunctionData, parseEventLogs, type Address, type Hex } from "viem";
 import { config } from "../../config.js";
 import { chain } from "../../chain/client.js";
 import { erc20Abi, nomaStakingAbi, ponsFeeEscrowAbi, ponsSweepAbi } from "../../chain/abis/index.js";
@@ -6,8 +6,8 @@ import { proposeSafeTx, safeTxStatus, type SafeCall } from "../../chain/safe.js"
 import { db } from "../../db/pool.js";
 import { alert } from "../../lib/alerts.js";
 import { logger } from "../../lib/logger.js";
-import { usdPrice, type PayAsset } from "../payments/assets.js";
 import { checkpointCycle, recordGenesis } from "../staking/service.js";
+import { isEthQuote, quoteToken, quoteUsd } from "./quoteAsset.js";
 
 /**
  * Reward cycle execution with a Safe multisig (Pons creator fee recipient + NomaStaking EXECUTOR).
@@ -25,17 +25,6 @@ import { checkpointCycle, recordGenesis } from "../staking/service.js";
 type Kind = "claim" | "swap" | "fund_staking";
 
 const safe = () => config.SAFE_ADDRESS as Address;
-const isEthQuote = () => config.NOMA_QUOTE_ASSET === "ETH";
-const quoteToken = (): Address => (isEthQuote() ? zeroAddress : (config.NOMA_QUOTE_ASSET as Address));
-
-/** USD value of a raw quote-asset amount (18 decimals), or null without a price. */
-async function quoteUsd(raw: bigint): Promise<string | null> {
-  try {
-    return ((Number(raw) / 1e18) * (await usdPrice(config.NOMA_QUOTE_ASSET as PayAsset))).toFixed(6);
-  } catch {
-    return null;
-  }
-}
 
 interface Proposal {
   id: number;

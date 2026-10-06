@@ -25,8 +25,7 @@ export function assetInfo(symbol: PayAsset): AssetInfo {
 
 /**
  * USD price of a pay asset. Stablecoins are pegged at 1.
- * ETH price is read from Redis (`price:ETH`).
- * TODO: add a price-feed worker that writes `price:ETH` (oracle or DEX TWAP on Robinhood Chain).
+ * ETH price is read from Redis (`price:ETH`), written by the price-feed worker (priceFeed.ts).
  */
 export async function usdPrice(symbol: PayAsset): Promise<number> {
   if (symbol === "USDC") return 1;
