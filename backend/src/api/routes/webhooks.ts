@@ -14,13 +14,15 @@ const orderQuery = z.object({ order: z.string().uuid().optional() });
  * order, so a forged or replayed call can at most trigger one extra status poll.
  */
 export async function webhookRoutes(app: FastifyInstance) {
-  // suppliers post JSON, forms or nothing at all; anything that is not JSON is ignored
+  // both suppliers post JSON; any other body is accepted and ignored
   app.addContentTypeParser("*", (_req, _payload, done) => done(null, undefined));
 
   app.route({
     method: ["GET", "POST"],
     url: "/webhooks/suppliers/:supplier/:token",
-    config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
+    // suppliers send bursts from a few addresses (eSIM Access: every profile event); a 429 could get
+    // the URL disabled, and a call without the secret costs one comparison
+    config: { rateLimit: false },
     handler: async (req) => {
       const { supplier, token } = params.parse(req.params);
       const a = adapters().find((x) => x.id === supplier);

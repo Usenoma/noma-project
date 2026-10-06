@@ -5,11 +5,11 @@ import { db } from "../db/pool.js";
 import { alert } from "../lib/alerts.js";
 import { logger } from "../lib/logger.js";
 import { syncSupplierCatalog } from "../modules/catalog/service.js";
-import { fulfill, markFulfillmentFailed, NUDGE_JOB, SupplierPendingError } from "../modules/fulfillment/service.js";
+import { fulfill, NUDGE_JOB, onFulfillmentJobFailed, SupplierPendingError } from "../modules/fulfillment/service.js";
 import { refreshEthPrice } from "../modules/payments/priceFeed.js";
 import { watchPayments } from "../modules/payments/watcher.js";
 import { checkHealth, markRun, workersHeartbeat } from "../modules/health/monitor.js";
-import { processRefund, startRefund, type RefundKind } from "../modules/refunds/service.js";
+import { processRefund, type RefundKind } from "../modules/refunds/service.js";
 import { advanceCycle, executeDueCycle } from "../modules/rewards/executor.js";
 import { indexRewards } from "../modules/rewards/indexer.js";
 import { indexStaking } from "../modules/staking/indexer.js";
@@ -132,13 +132,7 @@ async function main() {
 
   // fulfillment: retry with backoff; after the final attempt → failed → refund
   const fulfillmentWorker = workers.find((w) => w.name === QUEUE.fulfillment)!;
-  fulfillmentWorker.on("failed", async (job, err) => {
-    // a webhook nudge is an extra pass: only the order's own job decides that it failed
-    if (!job || job.name === NUDGE_JOB || job.attemptsMade < (job.opts.attempts ?? 1)) return;
-    const { orderId } = job.data as { orderId: string };
-    await markFulfillmentFailed(orderId, err.message);
-    await startRefund(orderId).catch((e) => alert("refund could not start", { orderId, err: e.message }, { key: `refund-start:${orderId}` }));
-  });
+  fulfillmentWorker.on("failed", onFulfillmentJobFailed);
 
   logger.info({ workers: workers.map((w) => w.name) }, "workers started");
   await workersHeartbeat();

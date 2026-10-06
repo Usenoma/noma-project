@@ -210,8 +210,14 @@ describe("supplier webhooks", () => {
 
   it("eSIM Access: only order notifications name an order", () => {
     const a = createEsimAccessAdapter("code:secret");
-    expect(a.webhookOrderId!({ notifyType: "ORDER_STATUS", content: { orderNo: "B23110718759768", orderStatus: "GOT_RESOURCE" } })).toBe("B23110718759768");
-    expect(a.webhookOrderId!({ notifyType: "ORDER_STATUS", "content[orderNo]": "B1" })).toBe("B1");
+    // sample payloads from docs.esimaccess.com (Webhooks)
+    const envelope = { notifyId: "447602ac1e5c4bb4980f786b0c2934d6", eventGenerateTime: "2026-04-22T17:16:34Z" };
+    const ready = { ...envelope, notifyType: "ORDER_STATUS", content: { orderNo: "B26042217160011", orderStatus: "GOT_RESOURCE", transactionId: "7544949834056-1-TR_50_30" } };
+    expect(a.webhookOrderId!(ready)).toBe("B26042217160011");
+    expect(a.webhookOrderId!({ notifyType: "ORDER_STATUS", "content[orderNo]": "B1" })).toBe("B1"); // their test form sends a query string
+    // setup check and per-profile events carry an orderNo too, but are not order notifications
+    expect(a.webhookOrderId!({ ...envelope, notifyType: "CHECK_HEALTH", content: { orderNo: "1234567890", orderStatus: "Test" } })).toBeNull();
+    expect(a.webhookOrderId!({ ...envelope, notifyType: "SMDP_EVENT", content: { orderNo: "B26042112200025", esimStatus: "IN_USE" } })).toBeNull();
     expect(a.webhookOrderId!({ notifyType: "DATA_USAGE", content: { orderNo: "B1" } })).toBeNull();
     expect(a.webhookOrderId!({ notifyType: "ORDER_STATUS", content: { orderNo: 5 } })).toBeNull();
     expect(a.webhookOrderId!({})).toBeNull();

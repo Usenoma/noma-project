@@ -12,10 +12,11 @@ import { orderRoutes } from "./routes/orders.js";
 import { publicRewardRoutes } from "./routes/rewards.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 
-export function buildServer(): FastifyInstance {
+export function buildServer(logStream?: { write(line: string): void }): FastifyInstance {
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,
+      ...(logStream ? { stream: logStream } : {}),
       // never log credentials
       redact: ["req.headers.authorization", 'req.headers["x-order-key"]', 'req.headers["x-wallet-signature"]'],
       serializers: {

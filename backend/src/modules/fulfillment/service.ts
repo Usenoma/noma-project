@@ -1,4 +1,6 @@
+import type { Job } from "bullmq";
 import { db, tx } from "../../db/pool.js";
+import { alert } from "../../lib/alerts.js";
 import { decryptJson, encryptJson } from "../../lib/crypto.js";
 import { encryptionKey } from "../../lib/keys.js";
 import { logger } from "../../lib/logger.js";
@@ -6,6 +8,7 @@ import { QUEUE, queue } from "../../queues.js";
 import { adapter } from "../../suppliers/registry.js";
 import type { Deliverable } from "../../suppliers/types.js";
 import { transition } from "../orders/service.js";
+import { startRefund } from "../refunds/service.js";
 
 export class SupplierPendingError extends Error {}
 
@@ -135,6 +138,17 @@ export async function nudgeFulfillment(supplierId: string, ref: { orderId: strin
     { jobId: `nudge-${orderId}`, attempts: 1, removeOnComplete: true, removeOnFail: true },
   );
   return true;
+}
+
+/**
+ * Failed-job handler of the fulfillment queue: once the order's own job has used its last attempt
+ * the order fails and is refunded. Earlier attempts and webhook nudges change nothing.
+ */
+export async function onFulfillmentJobFailed(job: Job<{ orderId: string }> | undefined, err: Error): Promise<void> {
+  if (!job || job.name === NUDGE_JOB || job.attemptsMade < (job.opts.attempts ?? 1)) return;
+  const { orderId } = job.data;
+  await markFulfillmentFailed(orderId, err.message);
+  await startRefund(orderId).catch((e) => alert("refund could not start", { orderId, err: e.message }, { key: `refund-start:${orderId}` }));
 }
 
 /** Called when the fulfillment job has exhausted its retries. */

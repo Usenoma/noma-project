@@ -2,16 +2,17 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { createTestClient, createWalletClient, http, publicActions, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { Worker } from "bullmq";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { config } from "../../src/config.js";
 import { robinhoodChain } from "../../src/chain/client.js";
 import { buildServer } from "../../src/api/server.js";
 import { erc20Abi } from "../../src/chain/abis/index.js";
 import { db } from "../../src/db/pool.js";
-import { redis } from "../../src/redis.js";
+import { bullConnection, redis } from "../../src/redis.js";
 import { closeQueues, QUEUE, queue } from "../../src/queues.js";
 import { syncSupplierCatalog } from "../../src/modules/catalog/service.js";
-import { fulfill, NUDGE_JOB, nudgeFulfillment } from "../../src/modules/fulfillment/service.js";
+import { fulfill, NUDGE_JOB, nudgeFulfillment, onFulfillmentJobFailed } from "../../src/modules/fulfillment/service.js";
 import { createOrder } from "../../src/modules/orders/service.js";
 import { watchPayments } from "../../src/modules/payments/watcher.js";
 import { processRefund } from "../../src/modules/refunds/service.js";
@@ -236,6 +237,7 @@ describe("payment watcher on a real chain", () => {
 });
 
 describe("supplier webhooks", () => {
+  const ORDER_ID = "7f1c2e0a-1111-4222-8333-944455556666";
   const app = buildServer();
   const hook = (token: string, query = "") => app.inject({ method: "POST", url: `/webhooks/suppliers/mock-esim/${token}${query}`, payload: {} });
   const nudgeJob = (orderId: string) => queue(QUEUE.fulfillment).getJob(`nudge-${orderId}`);
@@ -275,5 +277,61 @@ describe("supplier webhooks", () => {
 
     await db.query("UPDATE orders SET status = 'delivered' WHERE id = $1", [o.orderId]);
     expect(await nudgeFulfillment("mock-esim", { orderId: o.orderId })).toBe(false);
+  });
+
+  it("keeps the URL secret out of the request log", async () => {
+    const lines: string[] = [];
+    const level = config.LOG_LEVEL;
+    config.LOG_LEVEL = "info";
+    const logged = buildServer({ write: (line) => lines.push(line) });
+    config.LOG_LEVEL = level;
+    const token = webhookToken("mock-esim");
+    const res = await logged.inject({ method: "POST", url: `/webhooks/suppliers/mock-esim/${token}?order=${ORDER_ID}`, payload: {} });
+    await logged.close();
+    expect(res.statusCode).toBe(200);
+    const log = lines.join("");
+    expect(log).toContain(`/webhooks/suppliers/mock-esim/[redacted]?order=${ORDER_ID}`);
+    expect(log).not.toContain(token);
+  });
+
+  it("a failing nudge leaves the order alone; only the order's own last attempt fails and refunds it", async () => {
+    const o = await newOrder();
+    await pay(o.payTo, o.amount);
+    await watchPayments();
+    // already placed at the supplier, which now reports the order as failed
+    await db.query("UPDATE orders SET status = 'fulfilling' WHERE id = $1", [o.orderId]);
+    await db.query("INSERT INTO fulfillments (order_id, supplier_id, idempotency_key, supplier_order_id) VALUES ($1, 'mock-esim', $2, 'gone')", [o.orderId, o.orderId]);
+    const fulfillmentStatus = async () => (await db.query("SELECT status FROM fulfillments WHERE order_id = $1", [o.orderId])).rows[0].status;
+
+    // the real processor and failed-job handler of the workers process, on a clean queue
+    await queue(QUEUE.fulfillment).obliterate({ force: true });
+    const handled: { name: string; err: string }[] = [];
+    let wake = () => {};
+    const worker = new Worker<{ orderId: string }>(QUEUE.fulfillment, (job) => fulfill(job.data.orderId), { connection: bullConnection() });
+    worker.on("failed", async (job, err) => {
+      await onFulfillmentJobFailed(job, err);
+      handled.push({ name: job!.name, err: err.message });
+      wake();
+    });
+    const nextFailure = () => new Promise<void>((resolve) => (wake = resolve));
+
+    try {
+      let failure = nextFailure();
+      expect(await nudgeFulfillment("mock-esim", { supplierOrderId: "gone" })).toBe(true);
+      await failure;
+      expect(handled).toEqual([{ name: NUDGE_JOB, err: "supplier order gone failed" }]);
+      expect(await orderStatus(o.orderId)).toBe("fulfilling");
+      expect(await fulfillmentStatus()).toBe("pending");
+      expect(await nudgeJob(o.orderId)).toBeUndefined(); // gone, so the next notification can queue again
+
+      failure = nextFailure();
+      await queue(QUEUE.fulfillment).add("fulfill", { orderId: o.orderId }, { jobId: `fulfill-${o.orderId}`, attempts: 1 });
+      await failure;
+      expect(handled[1]).toEqual({ name: "fulfill", err: "supplier order gone failed" });
+      expect(await fulfillmentStatus()).toBe("failed");
+      expect(await orderStatus(o.orderId)).toBe("refunding");
+    } finally {
+      await worker.close();
+    }
   });
 });
