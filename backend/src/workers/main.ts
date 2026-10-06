@@ -5,7 +5,7 @@ import { db } from "../db/pool.js";
 import { alert } from "../lib/alerts.js";
 import { logger } from "../lib/logger.js";
 import { syncSupplierCatalog } from "../modules/catalog/service.js";
-import { fulfill, NUDGE_JOB, onFulfillmentJobFailed, SupplierPendingError } from "../modules/fulfillment/service.js";
+import { NUDGE_JOB, onFulfillmentJobFailed, processFulfillmentJob, SupplierPendingError } from "../modules/fulfillment/service.js";
 import { refreshEthPrice } from "../modules/payments/priceFeed.js";
 import { watchPayments } from "../modules/payments/watcher.js";
 import { checkHealth, markRun, workersHeartbeat } from "../modules/health/monitor.js";
@@ -78,7 +78,7 @@ const processors: Record<QueueName, Processor> = {
   },
   [QUEUE.priceFeed]: refreshEthPrice,
   [QUEUE.resourceExpiry]: releaseExpiredResources,
-  [QUEUE.fulfillment]: (job: Job<{ orderId: string }>) => fulfill(job.data.orderId),
+  [QUEUE.fulfillment]: processFulfillmentJob,
   [QUEUE.refund]: (job: Job<{ orderId: string; kind?: RefundKind }>) => processRefund(job.data.orderId, job.data.kind),
   // Pons trade accruals + NomaStaking positions/claims/notifications
   [QUEUE.rewardIndexer]: async () => {
@@ -130,7 +130,8 @@ async function main() {
     });
   }
 
-  // fulfillment: retry with backoff; after the final attempt → failed → refund
+  // fulfillment: errors retry with backoff, after the final attempt → failed → refund
+  // (a supplier that is merely still working waits instead: processFulfillmentJob)
   const fulfillmentWorker = workers.find((w) => w.name === QUEUE.fulfillment)!;
   fulfillmentWorker.on("failed", onFulfillmentJobFailed);
 

@@ -1,4 +1,5 @@
-import type { Job } from "bullmq";
+import { DelayedError, type Job } from "bullmq";
+import { config } from "../../config.js";
 import { db, tx } from "../../db/pool.js";
 import { alert } from "../../lib/alerts.js";
 import { decryptJson, encryptJson } from "../../lib/crypto.js";
@@ -49,7 +50,7 @@ async function storeDeliverable(orderId: string, deliverable: Deliverable, lifet
 /**
  * Idempotent: safe to re-run for the same order. The supplier call uses idempotency_key = order id,
  * and once a supplier order id is recorded we only poll status instead of purchasing again.
- * Throws SupplierPendingError while the supplier is still working (the job retries with backoff).
+ * Throws SupplierPendingError while the supplier is still working (the job waits and re-checks).
  */
 export async function fulfill(orderId: string): Promise<void> {
   // one run per order at a time: a concurrent duplicate job backs off and retries later
@@ -112,6 +113,44 @@ async function fulfillLocked(orderId: string): Promise<void> {
   if (status === "pending") throw new SupplierPendingError(`supplier order ${supplierOrderId} pending`);
   if (status === "failed") throw new Error(`supplier order ${supplierOrderId} failed`);
   await storeDeliverable(orderId, await supplier.deliverable(supplierOrderId), lifetimeFor(supplierOrderId));
+}
+
+/** While the supplier is still working the order is re-checked at this pace (a webhook nudge may come sooner). */
+const PENDING_RECHECK_MS = 30_000;
+/** Past the wait limit the order is a human's to resolve; slower re-checks so a late delivery still lands. */
+const OVERDUE_RECHECK_MS = 10 * 60_000;
+const OVERDUE_REMIND_SECONDS = 6 * 3600;
+
+/** Time until the next re-check of a pending order. Alerts once the supplier has been pending too long. */
+async function pendingRecheckDelay(orderId: string): Promise<number> {
+  const { rows } = await db.query<{ supplier_id: string; supplier_order_id: string | null; minutes: string }>(
+    "SELECT supplier_id, supplier_order_id, extract(epoch FROM now() - created_at) / 60 AS minutes FROM fulfillments WHERE order_id = $1",
+    [orderId],
+  );
+  const f = rows[0];
+  if (!f || Number(f.minutes) < config.FULFILLMENT_PENDING_ALERT_MINUTES) return PENDING_RECHECK_MS;
+  await alert(
+    "supplier order still pending: resolve with the supplier, or refund via POST /admin/orders/:id/refund",
+    { orderId, supplier: f.supplier_id, supplierOrderId: f.supplier_order_id, pending_minutes: Math.round(Number(f.minutes)) },
+    { kind: "action", key: `fulfillment-pending:${orderId}`, cooldownSeconds: OVERDUE_REMIND_SECONDS },
+  );
+  return OVERDUE_RECHECK_MS;
+}
+
+/**
+ * Processor of the fulfillment queue. A supplier that is still working never uses up the order's
+ * attempts and is never refunded automatically (it may still deliver): the job goes back to wait
+ * and is re-checked, and after FULFILLMENT_PENDING_ALERT_MINUTES a human is alerted. Only real
+ * errors count towards failure and refund.
+ */
+export async function processFulfillmentJob(job: Job<{ orderId: string }>, token?: string): Promise<void> {
+  try {
+    await fulfill(job.data.orderId);
+  } catch (err) {
+    if (!(err instanceof SupplierPendingError) || job.name === NUDGE_JOB) throw err;
+    await job.moveToDelayed(Date.now() + (await pendingRecheckDelay(job.data.orderId)), token);
+    throw new DelayedError();
+  }
 }
 
 /** Extra fulfillment pass triggered by a supplier webhook; never counts against the order's retries. */

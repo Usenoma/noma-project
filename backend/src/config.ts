@@ -34,6 +34,10 @@ const schema = z.object({
   INVOICE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   OVERPAY_REFUND_MIN_USD: z.coerce.number().min(0).default(0.5),
 
+  // a supplier order still pending after this long is handed to a human (alert); it is never
+  // refunded automatically, because the supplier may still deliver
+  FULFILLMENT_PENDING_ALERT_MINUTES: z.coerce.number().positive().default(60),
+
   REFUND_PRIVATE_KEY: optionalString,
   // refund hot wallet float: alert below these (ETH also pays the gas of USDC refunds)
   REFUND_WALLET_MIN_ETH: z.coerce.number().min(0).default(0.02),

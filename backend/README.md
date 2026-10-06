@@ -35,6 +35,8 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
 - **Fund-moving txs** (refunds) go through `sendOnce`: signed tx + hash are
   written to `chain_txs` before broadcast, so a crashed job resumes without double-sending.
 - **Fulfillment** uses `idempotency_key = order id`; once a supplier order id is recorded, retries only poll.
+  A supplier that is still working is re-checked without using up retries and never refunded
+  automatically; after `FULFILLMENT_PENDING_ALERT_MINUTES` (60) an alert asks a human to resolve it.
 - **Stock of the Week**: only the `active` cycle is ever returned by the API.
 - **Reward funds live in a Safe multisig**: the executor only proposes Safe transactions (delegate key) and
   waits for the owners to sign and execute them; `GET /admin/cycles/:id` shows the next action.

@@ -1,9 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { createTestClient, createWalletClient, http, publicActions, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Worker } from "bullmq";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { config } from "../../src/config.js";
 import { robinhoodChain } from "../../src/chain/client.js";
 import { buildServer } from "../../src/api/server.js";
@@ -12,11 +14,12 @@ import { db } from "../../src/db/pool.js";
 import { bullConnection, redis } from "../../src/redis.js";
 import { closeQueues, QUEUE, queue } from "../../src/queues.js";
 import { syncSupplierCatalog } from "../../src/modules/catalog/service.js";
-import { fulfill, NUDGE_JOB, nudgeFulfillment, onFulfillmentJobFailed } from "../../src/modules/fulfillment/service.js";
+import { fulfill, NUDGE_JOB, nudgeFulfillment, onFulfillmentJobFailed, processFulfillmentJob } from "../../src/modules/fulfillment/service.js";
 import { createOrder } from "../../src/modules/orders/service.js";
 import { watchPayments } from "../../src/modules/payments/watcher.js";
 import { processRefund } from "../../src/modules/refunds/service.js";
 import { createMockEsimAdapter } from "../../src/suppliers/mock.js";
+import { adapter } from "../../src/suppliers/registry.js";
 import { webhookToken } from "../../src/suppliers/webhooks.js";
 import { TEST_USDC_BYTECODE } from "../contracts/testUsdc.js";
 
@@ -332,6 +335,91 @@ describe("supplier webhooks", () => {
       expect(await orderStatus(o.orderId)).toBe("refunding");
     } finally {
       await worker.close();
+    }
+  });
+});
+
+describe("supplier still working", () => {
+  const until = async (ok: () => Promise<boolean>) => {
+    for (let i = 0; i < 200; i++) {
+      if (await ok()) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error("timed out waiting");
+  };
+
+  it("waits without using up attempts, alerts a human after the limit, never refunds, and still delivers late", async () => {
+    const alerts: { kind: string; message: string; details: Record<string, unknown> }[] = [];
+    const sink = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        alerts.push(JSON.parse(body));
+        res.end();
+      });
+    });
+    await new Promise<void>((r) => sink.listen(0, "127.0.0.1", r));
+    config.ALERT_WEBHOOK_URL = `http://127.0.0.1:${(sink.address() as AddressInfo).port}/hook`;
+
+    await queue(QUEUE.fulfillment).obliterate({ force: true });
+    const o = await newOrder();
+    await pay(o.payTo, o.amount);
+    await watchPayments(); // queues the order's own job: 5 attempts
+    const job = async () => (await queue(QUEUE.fulfillment).getJob(`fulfill-${o.orderId}`))!;
+    expect((await job()).opts.attempts).toBe(5);
+
+    const status = vi.spyOn(adapter("mock-esim"), "status").mockResolvedValue("pending");
+    const failures: string[] = [];
+    // the processor and failed-job handler of the workers process
+    const worker = new Worker<{ orderId: string }>(QUEUE.fulfillment, processFulfillmentJob, { connection: bullConnection() });
+    worker.on("failed", async (j, err) => {
+      failures.push(err.message);
+      await onFulfillmentJobFailed(j, err);
+    });
+    const waiting = (checks: number) => until(async () => status.mock.calls.length === checks && (await (await job()).getState()) === "delayed");
+
+    try {
+      // more pending answers than the job has attempts
+      for (let check = 1; check <= 8; check++) {
+        await waiting(check);
+        if (check < 8) await (await job()).promote();
+      }
+      expect(await orderStatus(o.orderId)).toBe("fulfilling");
+      expect(failures).toEqual([]);
+      expect(alerts).toEqual([]);
+      let j = await job();
+      expect(j.attemptsMade).toBe(0);
+      expect(j.delay).toBeGreaterThan(25_000);
+      expect(j.delay).toBeLessThanOrEqual(30_000);
+
+      // an hour later: a human is alerted, the order is neither failed nor refunded
+      await db.query("UPDATE fulfillments SET created_at = now() - interval '61 minutes' WHERE order_id = $1", [o.orderId]);
+      await j.promote();
+      await waiting(9);
+      await until(async () => alerts.length === 1);
+      expect(alerts[0]).toMatchObject({
+        kind: "action",
+        message: expect.stringContaining("supplier order still pending"),
+        details: { orderId: o.orderId, supplier: "mock-esim", supplierOrderId: `mock_${o.orderId}`, pending_minutes: 61 },
+      });
+      expect(await orderStatus(o.orderId)).toBe("fulfilling");
+      expect((await db.query("SELECT 1 FROM refunds WHERE order_id = $1", [o.orderId])).rowCount).toBe(0);
+      j = await job();
+      expect(j.delay).toBeGreaterThan(9 * 60_000); // slower re-checks from here on
+      await j.promote();
+      await waiting(10);
+      expect(alerts).toHaveLength(1); // reminder is on a cooldown, not every re-check
+
+      // the supplier delivers after all
+      status.mockRestore();
+      await (await job()).promote();
+      await until(async () => (await orderStatus(o.orderId)) === "delivered");
+      expect(failures).toEqual([]);
+    } finally {
+      status.mockRestore();
+      await worker.close();
+      config.ALERT_WEBHOOK_URL = undefined;
+      sink.close();
     }
   });
 });
