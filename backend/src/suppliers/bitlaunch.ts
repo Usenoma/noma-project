@@ -9,6 +9,8 @@ export const VPS_LIFETIME_DAYS = 30;
 /** Only offer mainstream Linux images; Windows carries undocumented extra licence cost. */
 const IMAGE_ALLOWLIST = /^(ubuntu|debian|rocky|alma|fedora)/i;
 const MAX_VERSIONS_PER_OS = 3;
+/** BitLaunch rejects a password that ends in a number or symbol, so the derived password ends with one of these. */
+const PASSWORD_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 interface ImageVersion {
   id: string;
@@ -80,8 +82,11 @@ export function createBitLaunchAdapter(apiToken: string, passwordSecret: Buffer)
   }
 
   /** Root password derived from the order id: recoverable at delivery time without storing it anywhere. */
-  const rootPassword = (orderId: string) =>
-    `Nm${createHmac("sha256", passwordSecret).update(`bitlaunch-root:${orderId}`).digest("base64url").slice(0, 22)}9!`;
+  const rootPassword = (orderId: string) => {
+    const hash = createHmac("sha256", passwordSecret).update(`bitlaunch-root:${orderId}`).digest("base64url").replace(/[-_]/g, "");
+    const last = hash.charCodeAt(hash.length - 1) % PASSWORD_LETTERS.length;
+    return `Nm${hash.slice(0, 18)}${PASSWORD_LETTERS[last]}`;
+  };
 
   const serverName = (orderId: string) => `noma-${orderId}`;
   const getServer = async (id: string) => (await call<{ server: Server }>("GET", `/servers/${id}`)).server;
