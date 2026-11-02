@@ -2,6 +2,7 @@ import { db, setSetting, tx } from "../../db/pool.js";
 import { badRequest, notFound } from "../../lib/errors.js";
 import type { MarkupConfig } from "../catalog/pricing.js";
 import { startRefund } from "../refunds/service.js";
+import { aiKeySummary, revokeKey } from "../ai/service.js";
 
 export async function setMarkup(markup: MarkupConfig) {
   await setSetting("markup_pct", markup);
@@ -29,10 +30,21 @@ export async function setSupplierBalanceAlert(id: string, alertUsd: number) {
   if (!rowCount) throw notFound("supplier");
 }
 
+export async function aiKeys(filter: { keyId?: string; orderId?: string } = {}) {
+  return aiKeySummary(filter);
+}
+
+export async function revokeAiKey(id: string) {
+  await revokeKey(id);
+}
+
 export async function manualRefund(orderId: string) {
-  // a manual refund is allowed from any stuck paid/fulfilling state: force to failed first
+  // a manual refund is allowed from any stuck paid/fulfilling state, and from an underpaid or
+  // expired invoice that actually received funds. Force to failed first, then the normal refund.
   await db.query(
-    `UPDATE orders SET status = 'failed', updated_at = now() WHERE id = $1 AND status IN ('paid', 'fulfilling')`,
+    `UPDATE orders SET status = 'failed', updated_at = now()
+     WHERE id = $1 AND status IN ('paid', 'fulfilling', 'awaiting_payment', 'expired')
+       AND EXISTS (SELECT 1 FROM invoices i WHERE i.order_id = $1 AND i.received > 0 AND i.payer_address IS NOT NULL)`,
     [orderId],
   );
   if (!(await startRefund(orderId))) throw badRequest("order is not in a refundable state");

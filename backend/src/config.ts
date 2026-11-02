@@ -9,6 +9,7 @@ const optionalNumber = z.preprocess(blankToUndefined, z.coerce.number().optional
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3000),
+  HOST: z.string().default("0.0.0.0"),
   LOG_LEVEL: z.string().default("info"),
 
   DATABASE_URL: z.string().url(),
@@ -29,8 +30,10 @@ const schema = z.object({
   ZEC_TOKEN_ADDRESS: optionalAddress,
   REWARD_INDEXER_START_BLOCK: z.preprocess(blankToUndefined, z.coerce.bigint().optional()),
 
-  PAYMENT_XPUB: optionalString,
-  USDC_ADDRESS: optionalAddress,
+  // Single fixed address buyers pay into (non-custodial: wallet-to-wallet, no deposit-address
+  // derivation, no sweeper). Receives both native ETH and ERC-20 USDG.
+  PAYMENT_ADDRESS: optionalAddress,
+  USDG_ADDRESS: optionalAddress,
   INVOICE_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   OVERPAY_REFUND_MIN_USD: z.coerce.number().min(0).default(0.5),
 
@@ -39,17 +42,12 @@ const schema = z.object({
   FULFILLMENT_PENDING_ALERT_MINUTES: z.coerce.number().positive().default(60),
 
   REFUND_PRIVATE_KEY: optionalString,
-  // refund hot wallet float: alert below these (ETH also pays the gas of USDC refunds)
+  // Automatic refunds for late/underpaid payments and failed fulfillment. When off, the funds are
+  // held and an operator can still refund manually via the admin endpoint.
+  REFUNDS_AUTO_ENABLED: z.enum(["0", "1"]).default("1").transform((v) => v === "1"),
+  // refund hot wallet float: alert below these (ETH also pays the gas of USDG refunds)
   REFUND_WALLET_MIN_ETH: z.coerce.number().min(0).default(0.02),
   REFUND_WALLET_MIN_USDC: z.coerce.number().min(0).default(100),
-
-  // Deposit sweeper (separate process, src/sweeper/main.ts). PAYMENT_XPRV is the private
-  // counterpart of PAYMENT_XPUB and must only ever be configured for the sweeper.
-  PAYMENT_XPRV: optionalString,
-  TREASURY_ADDRESS: optionalAddress,
-  SWEEPER_GAS_PRIVATE_KEY: optionalString, // funds gas for token sweeps out of deposit addresses
-  SWEEP_MIN_USD: z.coerce.number().min(0).default(5),
-  SWEEP_INTERVAL_MINUTES: z.coerce.number().positive().default(60),
 
   // Reward Engine Safe multisig: Pons creator fee recipient + NomaStaking EXECUTOR.
   // The backend only proposes batches (delegate key); owners sign and execute in Safe{Wallet}.
@@ -68,6 +66,9 @@ const schema = z.object({
   ENCRYPTION_KEY: z.string().refine((v) => Buffer.from(v, "base64").length === 32, {
     message: "ENCRYPTION_KEY must be 32 bytes, base64-encoded",
   }),
+  // Read-only wallet sessions for the buyer vault. Issued after a wallet signature and scoped
+  // to order reads; no account and no write access.
+  WALLET_SESSION_TTL_MINUTES: z.coerce.number().int().positive().max(1440).default(60),
   ADMIN_TOKEN: z.string().min(24),
 
   // Alert delivery (all optional; without them alerts are log lines only)
@@ -78,7 +79,38 @@ const schema = z.object({
   MEMECOIN_FEES_PENDING_ALERT_HOURS: z.coerce.number().positive().default(48),
 
   LLM_API_KEY: optionalString,
-  LLM_MODEL: z.string().default("claude-opus-5-5"),
+  LLM_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
+  LLM_MODEL: z.string().default("xiaomi/mimo-v2.6-flash"),
+
+  // AI gateway: buyers get a NOMA key, never an OpenRouter key. OpenRouter is the upstream.
+  OPENROUTER_API_KEY: optionalString,
+  OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
+  OPENROUTER_MODELS: z
+    .string()
+    .default("openai/gpt-4o-mini")
+    .transform((v) => v.split(",").map((m) => m.trim()).filter(Boolean)),
+  AI_PUBLIC_BASE_URL: z.string().url().default("http://localhost:3101/api/ai/v1"),
+  AI_KEY_TTL_DAYS: z.coerce.number().int().positive().default(365),
+  AI_MAX_TOKENS: z.coerce.number().int().positive().default(4096),
+  AI_RESERVE_SAFETY: z.coerce.number().min(1).max(3).default(1.15),
+  // A reserved usage row older than this is from a crashed/aborted request; the reaper releases it.
+  AI_RESERVATION_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(30),
+
+  // Ghost Agent (FEATURE_GHOST_AGENT=1): privacy-first research missions. Search runs through
+  // Tavily when a key is set, otherwise keyless DuckDuckGo; page fetches are server-side,
+  // stateless and SSRF-guarded.
+  TAVILY_API_KEY: optionalString,
+  // Ghost missions route through OpenRouter by default (privacy-focused prompts trip the
+  // MiMo-direct endpoint's content moderation). Override per deployment if needed.
+  GHOST_LLM_API_KEY: optionalString,
+  GHOST_LLM_BASE_URL: z.preprocess(blankToUndefined, z.string().url().optional()),
+  GHOST_LLM_MODEL: optionalString,
+  TAVILY_BASE_URL: z.string().url().default("https://api.tavily.com"),
+  GHOST_MAX_SEARCH_RESULTS: z.coerce.number().int().positive().default(5),
+  GHOST_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  GHOST_FETCH_MAX_BYTES: z.coerce.number().int().positive().default(200_000),
+  GHOST_FETCH_MAX_CHARS: z.coerce.number().int().positive().default(12_000),
+  GHOST_MAX_TOOL_TURNS: z.coerce.number().int().positive().default(12),
 
   // Public base URL of this API (e.g. https://api.example.com). Enables supplier webhooks, which
   // only speed up fulfillment; without it suppliers are polled.
@@ -94,16 +126,8 @@ const schema = z.object({
   VPNRESELLERS_KEY: optionalString,
   VPNRESELLERS_MONTHLY_USD: z.coerce.number().positive().default(1.99), // per active account (no price API)
   IPROYAL_KEY: optionalString,
-  OPENROUTER_PROVISIONING_KEY: optionalString,
 });
 
 export type Config = z.infer<typeof schema>;
 
 export const config: Config = schema.parse(process.env);
-
-/** API and workers must never hold the deposit xprv: it belongs to the sweeper process only. */
-export function assertNoSweeperSecrets(role: string): void {
-  if (config.PAYMENT_XPRV && config.NODE_ENV === "production") {
-    throw new Error(`${role}: PAYMENT_XPRV must not be configured here (sweeper only)`);
-  }
-}

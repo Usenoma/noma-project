@@ -30,7 +30,7 @@ beforeAll(async () => {
   Object.assign(process.env, {
     ALERT_WEBHOOK_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}/hook`,
     REFUND_PRIVATE_KEY: refundKey,
-    USDC_ADDRESS: "", // ETH float only here; the USDC path reads the same way
+    USDG_ADDRESS: "", // ETH float only here; the USDG path reads the same way
   });
   mod = {
     ...(await import("../../src/modules/health/monitor.js")),

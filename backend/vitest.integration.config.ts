@@ -1,12 +1,5 @@
-import { mnemonicToSeedSync } from "@scure/bip39";
 import { getContractAddress } from "viem";
-import { HDKey } from "viem/accounts";
 import { defineConfig } from "vitest/config";
-
-// Anvil's well-known dev mnemonic. Deposit addresses use account 1' so they never collide
-// with the funded anvil accounts (m/44'/60'/0'/0/i) used as payer / refund wallet.
-const MNEMONIC = "test test test test test test test test test test test junk";
-const xpub = HDKey.fromMasterSeed(mnemonicToSeedSync(MNEMONIC)).derive("m/44'/60'/1'/0").publicExtendedKey;
 
 // Staking test contracts are deployed by anvil account 3 (nonces 0..3), so their addresses are
 // known before the backend config loads: NOMA, ZEC, NVDA, NomaStaking.
@@ -29,16 +22,26 @@ export default defineConfig({
       CHAIN_RPC_URL: "http://127.0.0.1:58545",
       CHAIN_ID: "31337",
       PAYMENT_CONFIRMATIONS: "3",
-      PAYMENT_XPUB: xpub,
+      // Single fixed payment address (non-custodial model) = anvil account 0, also the refund wallet.
+      PAYMENT_ADDRESS: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
       // first contract deployed by anvil account 0 (nonce 0)
-      USDC_ADDRESS: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+      USDG_ADDRESS: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
       // anvil account 0
       REFUND_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      REFUNDS_AUTO_ENABLED: "1",
       OVERPAY_REFUND_MIN_USD: "0.5",
       NOMA_TOKEN_ADDRESS: deployed(0),
       ZEC_TOKEN_ADDRESS: deployed(1),
       NOMA_STAKING_ADDRESS: deployed(3),
       REWARD_INDEXER_START_BLOCK: "0",
+      // AI gateway: the fake OpenRouter server runs on 59999 (see test/integration/ai.test.ts).
+      OPENROUTER_API_KEY: "test-openrouter-key",
+      OPENROUTER_BASE_URL: "http://127.0.0.1:59999",
+      OPENROUTER_MODELS: "test/model",
+      AI_PUBLIC_BASE_URL: "http://localhost:3101/api/ai/v1",
+      AI_KEY_TTL_DAYS: "365",
+      AI_MAX_TOKENS: "4096",
+      AI_RESERVE_SAFETY: "1.15",
     },
   },
 });

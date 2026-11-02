@@ -1,0 +1,239 @@
+"use client";
+
+import { useState } from "react";
+import useSWR, { useSWRConfig } from "swr";
+import {
+  useAccount,
+  useBalance,
+  useReadContract,
+  useSendTransaction,
+  useSwitchChain,
+  useWriteContract,
+} from "wagmi";
+import { formatUnits } from "viem";
+import { getOrder } from "@/lib/api";
+import { ERC20_ABI, USDG_ADDRESS } from "@/lib/abi";
+import { fromRaw } from "@/lib/format";
+import { robinhoodChain } from "@/lib/wagmi";
+import type { Invoice } from "@/lib/types";
+import { Countdown } from "./Countdown";
+import { MonoBlock } from "./MonoBlock";
+import { QrBlock } from "./QrBlock";
+import { StateWord } from "./StateWord";
+
+// The checkout figure: locked price, TTL countdown, payment address, QR, and one-click pay.
+// Polls the order while payment is pending.
+export function InvoicePanel({
+  orderId,
+  orderKey,
+  walletToken,
+}: {
+  orderId: string;
+  orderKey?: string;
+  walletToken?: string;
+}) {
+  const { mutate } = useSWRConfig();
+  const cacheKey = ["order", orderId, orderKey ? "key" : "", walletToken ? walletToken.slice(-10) : ""];
+  const { data: order } = useSWR(
+    cacheKey,
+    () => getOrder(orderId, orderKey, walletToken),
+    {
+      refreshInterval: (latest) =>
+        latest && ["delivered", "expired", "failed", "refunded"].includes(latest.status)
+          ? 0
+          : 5_000,
+    },
+  );
+
+  const invoice = order?.invoice;
+  const decimals = invoice?.asset === "USDG" ? 6 : 18;
+  const payable = invoice?.status === "pending" || invoice?.status === "seen";
+
+  return (
+    <div className="border border-line bg-bg-raised">
+      <div className="flex items-baseline justify-between border-b border-line px-4 py-2">
+        <span className="font-mono text-[0.7rem] tracking-widest text-ink-dim uppercase">
+          fig. — the invoice
+        </span>
+        {order ? <StateWord state={order.status} /> : null}
+      </div>
+      <div className="flex flex-col gap-4 p-4">
+        {!order || !invoice ? (
+          <p className="font-mono text-sm text-ink-dim">loading invoice…</p>
+        ) : (
+          <>
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm text-ink-dim">amount</span>
+              <span className="tnum font-mono text-2xl">
+                {fromRaw(invoice.amount, decimals)} {invoice.asset}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm text-ink-dim">price locked</span>
+              <span className="tnum font-mono text-sm">${order.price_usd}</span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm text-ink-dim">expires</span>
+              {invoice.status === "expired" ? (
+                <span className="font-mono text-sm text-ink-dim">expired</span>
+              ) : (
+                <Countdown to={invoice.expires_at} prefix="in" />
+              )}
+            </div>
+
+            {invoice.status === "underpaid" ? (
+              <div className="border border-warn bg-bg px-3 py-2 font-mono text-xs leading-5 text-warn">
+                <p>
+                  underpaid — received {fromRaw(invoice.received ?? "0", decimals)} of{" "}
+                  {fromRaw(invoice.amount, decimals)} {invoice.asset}.
+                </p>
+                <p className="mt-1 text-ink-dim">
+                  do not send the full invoice again. automatic refunds are disabled; report the
+                  payment and support will resolve the shortfall.
+                </p>
+              </div>
+            ) : invoice.status === "expired" || invoice.status === "late_paid" ? (
+              <p className="border border-line bg-bg px-3 py-2 font-mono text-xs text-ink-dim">
+                {invoice.status === "late_paid"
+                  ? "paid late — automatic refunds are disabled; contact support. do not pay again."
+                  : "do not pay — expired. create a new invoice from the product page."}
+              </p>
+            ) : (
+              <>
+                <div>
+                  <div className="mb-1.5 font-mono text-[0.7rem] tracking-widest text-ink-dim uppercase">
+                    send exactly
+                  </div>
+                  <MonoBlock value={`${fromRaw(invoice.amount, decimals)} ${invoice.asset}`} className="w-full" />
+                </div>
+                <div>
+                  <div className="mb-1.5 font-mono text-[0.7rem] tracking-widest text-ink-dim uppercase">
+                    to address
+                  </div>
+                  <MonoBlock value={invoice.pay_to} className="w-full" />
+                </div>
+                <div className="flex justify-center py-2">
+                  <QrBlock value={invoice.pay_to} size={200} />
+                </div>
+                {payable ? (
+                  <PayButton invoice={invoice} decimals={decimals} onPaid={() => mutate(cacheKey)} />
+                ) : null}
+              </>
+            )}
+
+            {invoice.tx_hash ? (
+              <div className="flex items-baseline justify-between border-t border-line pt-3">
+                <span className="text-sm text-ink-dim">payment tx</span>
+                <span className="tnum font-mono text-xs">{invoice.tx_hash.slice(0, 18)}…</span>
+              </div>
+            ) : null}
+            <p className="text-xs text-ink-dim">
+              the amount is unique to this invoice — send exactly it. Payments go wallet-to-wallet;
+              no account is created.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PayButton({
+  invoice,
+  decimals,
+  onPaid,
+}: {
+  invoice: Invoice;
+  decimals: number;
+  onPaid: () => void;
+}) {
+  const { address, isConnected, chainId } = useAccount();
+  const { switchChain, isPending: switching } = useSwitchChain();
+  const { writeContractAsync, isPending: writing } = useWriteContract();
+  const { sendTransactionAsync, isPending: sending } = useSendTransaction();
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+
+  const { data: usdgBalance } = useReadContract({
+    address: USDG_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: "balanceOf",
+    args: address ? [address] : undefined,
+    query: { enabled: !!address && invoice.asset === "USDG" },
+  });
+  const { data: ethBalance } = useBalance({
+    address,
+    query: { enabled: !!address && invoice.asset === "ETH" },
+  });
+
+  // Manual payment (copy address + amount) is always available; the button is a convenience.
+  if (!isConnected || !address) return null;
+
+  const needed = BigInt(invoice.amount);
+  const balance = invoice.asset === "USDG" ? (usdgBalance as bigint | undefined) : ethBalance?.value;
+  const insufficient = balance != null && balance < needed;
+  const wrongChain = chainId !== robinhoodChain.id;
+  const busy = writing || sending || switching;
+
+  async function pay() {
+    setError(null);
+    setSent(false);
+    try {
+      if (invoice.asset === "USDG") {
+        await writeContractAsync({
+          address: USDG_ADDRESS,
+          abi: ERC20_ABI,
+          functionName: "transfer",
+          args: [invoice.pay_to as `0x${string}`, needed],
+        });
+      } else {
+        await sendTransactionAsync({
+          to: invoice.pay_to as `0x${string}`,
+          value: needed,
+        });
+      }
+      setSent(true);
+      onPaid();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.split("\n")[0] : "payment failed";
+      setError(msg);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {wrongChain ? (
+        <button
+          type="button"
+          onClick={() => switchChain({ chainId: robinhoodChain.id })}
+          disabled={switching}
+          className="w-full border border-warn px-4 py-3 font-mono text-sm tracking-widest text-warn uppercase hover:border-accent hover:text-accent disabled:opacity-50"
+        >
+          {switching ? "switching…" : "switch to robinhood chain"}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={pay}
+          disabled={busy || insufficient}
+          className="btn w-full"
+        >
+          {busy
+            ? "confirm in wallet…"
+            : `pay ${fromRaw(invoice.amount, decimals)} ${invoice.asset} from wallet`}
+        </button>
+      )}
+      <div className="flex items-baseline justify-between font-mono text-[0.7rem] text-ink-dim">
+        <span>
+          balance{" "}
+          {balance != null ? `${formatUnits(balance, decimals)} ${invoice.asset}` : "—"}
+        </span>
+        {insufficient ? <span className="text-bad">insufficient balance</span> : null}
+      </div>
+      {sent ? (
+        <p className="font-mono text-xs text-ink-dim">payment sent — waiting for confirmation</p>
+      ) : null}
+      {error ? <p className="font-mono text-xs text-bad">{error}</p> : null}
+    </div>
+  );
+}

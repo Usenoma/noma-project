@@ -1,4 +1,5 @@
 import rateLimit from "@fastify/rate-limit";
+import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { config } from "../config.js";
@@ -7,9 +8,14 @@ import { readiness } from "../modules/health/monitor.js";
 import { rateLimitRedis } from "../redis.js";
 import { adminRoutes } from "./routes/admin.js";
 import { agentRoutes } from "./routes/agent.js";
+import { aiRoutes } from "./routes/ai.js";
+import { capsuleRoutes } from "./routes/capsules.js";
 import { catalogRoutes } from "./routes/catalog.js";
+import { ghostRoutes } from "./routes/ghost.js";
+import { identityRoutes } from "./routes/identity.js";
 import { orderRoutes } from "./routes/orders.js";
 import { publicRewardRoutes } from "./routes/rewards.js";
+import { subscriptionRoutes } from "./routes/subscriptions.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 
 export function buildServer(logStream?: { write(line: string): void }): FastifyInstance {
@@ -18,7 +24,7 @@ export function buildServer(logStream?: { write(line: string): void }): FastifyI
       level: config.LOG_LEVEL,
       ...(logStream ? { stream: logStream } : {}),
       // never log credentials
-      redact: ["req.headers.authorization", 'req.headers["x-order-key"]', 'req.headers["x-wallet-signature"]'],
+      redact: ["req.headers.authorization", 'req.headers["x-order-key"]', 'req.headers["x-wallet-signature"]', 'req.headers["x-ghost-key"]'],
       serializers: {
         // supplier webhook URLs carry their secret in the path
         req: (req) => ({
@@ -44,6 +50,13 @@ export function buildServer(logStream?: { write(line: string): void }): FastifyI
   // per-IP limits, shared across API instances via Redis; tighter on routes that cost money
   app.register(rateLimit, { global: true, max: 120, timeWindow: "1 minute", redis: rateLimitRedis() });
 
+  // the AI gateway is called from other apps/browsers; the bearer key is the auth
+  app.register(cors, {
+    origin: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["authorization", "content-type", "x-ghost-key"],
+  });
+
   // liveness (container healthcheck) and readiness (external uptime monitoring: DB, Redis, workers)
   app.get("/health", { config: { rateLimit: false } }, async () => ({ ok: true }));
   app.get("/ready", { config: { rateLimit: false } }, async (_req, reply) => {
@@ -55,7 +68,13 @@ export function buildServer(logStream?: { write(line: string): void }): FastifyI
   app.register(orderRoutes);
   app.register(publicRewardRoutes);
   app.register(agentRoutes);
+  app.register(aiRoutes);
   app.register(webhookRoutes);
+  // post-launch (gated by FEATURE_* env; answer "not enabled" until switched on)
+  app.register(capsuleRoutes);
+  app.register(subscriptionRoutes);
+  app.register(identityRoutes);
+  app.register(ghostRoutes);
   app.register(adminRoutes, { prefix: "/admin" });
 
   return app;

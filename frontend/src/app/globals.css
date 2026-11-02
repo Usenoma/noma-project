@@ -1,0 +1,477 @@
+@import "tailwindcss";
+
+:root {
+  /* Obsidian Stage: a warm black cinema, bone type, gold as the only light source. */
+  --bg: #0b0a09;
+  --bg-raised: #15120f;
+  --bg-panel: #100e0c;
+  --line: #29241d;
+  --line-strong: #3d362c;
+  --ink: #f5efe2;
+  --ink-dim: #a39a8b;
+  --accent: #c9a45e;
+  --gold: #e0c184;
+  --warn: #d9a44a;
+  --bad: #cf705e;
+  --good: #84b491;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-raised: var(--bg-raised);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-accent: var(--accent);
+  --color-gold: var(--gold);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-good: var(--good);
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* One grotesk carries the whole voice. Mono is reserved for data. */
+h1,
+h2,
+.display {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+
+h3 {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* The stage headline: the largest statement on a surface. */
+.hero-title {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: -0.055em;
+  line-height: 0.9;
+}
+
+/* The wordmark: a tight grotesk lockup, not a museum nameplate. */
+.wordmark {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.accent-italic {
+  font-style: italic;
+  letter-spacing: -0.045em;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* tabular numerals for anything numeric */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* small-caps rule label, the plate number */
+.rule-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--ink-dim);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.rule-label::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
+
+/* one control language: gold fill or ruled ghost. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  background: var(--accent);
+  color: #14120e;
+  padding: 0.8rem 1.35rem;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  transition:
+    background 0.25s var(--ease-out),
+    border-color 0.25s var(--ease-out),
+    color 0.25s var(--ease-out),
+    transform 0.25s var(--ease-out);
+}
+.btn:hover {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+  transform: translateY(-1px);
+}
+.btn:active {
+  transform: translateY(0);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+.btn-ghost:hover {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn-accent {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #14120e;
+}
+.btn-accent:hover {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+.btn-sm {
+  padding: 0.45rem 0.8rem;
+  font-size: 0.76rem;
+}
+
+/* A pill exists in exactly one place: the hero's "how it works" cue. */
+.btn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(11, 10, 9, 0.72);
+  padding: 0.35rem 0.35rem 0.35rem 1.05rem;
+  font-size: 0.85rem;
+  color: var(--ink);
+  transition:
+    border-color 0.25s var(--ease-out),
+    background 0.25s var(--ease-out);
+}
+.btn-pill:hover {
+  border-color: var(--accent);
+  background: rgba(21, 18, 15, 0.9);
+}
+.btn-pill .pill-dot {
+  display: grid;
+  width: 2.05rem;
+  height: 2.05rem;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #14120e;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8rem;
+  transition: transform 0.25s var(--ease-out);
+}
+.btn-pill:hover .pill-dot {
+  transform: translateY(1px);
+}
+
+/* Responsive shell: a measured column on laptops, a wider stage on large monitors,
+   edge padding on phones. */
+.shell {
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+@media (min-width: 640px) {
+  .shell {
+    padding-inline: 1.5rem;
+  }
+}
+@media (min-width: 1536px) {
+  .shell {
+    max-width: 87.5rem;
+  }
+}
+@media (min-width: 1920px) {
+  .shell {
+    max-width: 96rem;
+  }
+}
+
+/* Floating evidence panel. Flat, hairline-ruled, never glass. */
+.panel {
+  border: 1px solid var(--line);
+  background: var(--bg-panel);
+}
+
+/* Functional scrim over the brand film: contrast for the type, not decoration. */
+.hero-scrim {
+  background:
+    linear-gradient(90deg, rgba(11, 10, 9, 0.94) 0%, rgba(11, 10, 9, 0.72) 44%, rgba(11, 10, 9, 0.28) 100%),
+    linear-gradient(180deg, rgba(11, 10, 9, 0.72) 0%, rgba(11, 10, 9, 0.12) 36%, rgba(11, 10, 9, 0.92) 100%);
+}
+
+/* Editorial plate: the brand art is allowed to breathe under the cursor. */
+.plate img {
+  transition: transform 0.9s var(--ease-out), filter 0.9s var(--ease-out);
+}
+.plate:hover img {
+  transform: scale(1.025);
+}
+
+/* Feature carousel slide-in */
+@keyframes plate-in {
+  from {
+    opacity: 0;
+    transform: translateX(2%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.plate-slide {
+  animation: plate-in 0.55s var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .plate-slide {
+    animation: none;
+  }
+}
+
+/* Form language shared by every surface. */
+.field {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg);
+  padding: 0.65rem 0.8rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.875rem;
+  color: var(--ink);
+  transition: border-color 0.2s ease;
+}
+.field::placeholder {
+  color: var(--ink-dim);
+}
+.field:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.field:disabled {
+  opacity: 0.5;
+}
+
+/* iOS zooms any field under 16px on focus; keep the layout intact on phones.
+   This must come after the base .field rule to win the cascade. */
+@media (max-width: 639px) {
+  .field {
+    font-size: 1rem;
+  }
+}
+.field-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+}
+
+/* focus */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* ---- motion ------------------------------------------------------------------------- */
+
+/* Page arrival: a short lift, never a fade from black. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+main {
+  animation: page-in 0.5s var(--ease-out) both;
+}
+
+/* Hero: masked line rise plus a stagger for the supporting stack. */
+@keyframes hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes line-rise {
+  from {
+    transform: translateY(112%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.hero-rise {
+  animation: hero-rise 0.9s var(--ease-out) both;
+}
+.hero-line {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.04em;
+}
+.hero-line > span {
+  display: block;
+  animation: line-rise 1.15s var(--ease-out) both;
+}
+.delay-1 {
+  animation-delay: 0.08s;
+}
+.delay-2 {
+  animation-delay: 0.16s;
+}
+.delay-3 {
+  animation-delay: 0.26s;
+}
+.delay-4 {
+  animation-delay: 0.38s;
+}
+.delay-5 {
+  animation-delay: 0.5s;
+}
+
+/* Scroll reveal: native scroll-driven, so content is never hidden without JS. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@supports (animation-timeline: view()) {
+  .reveal {
+    animation: rise-in linear both;
+    animation-timeline: view();
+    animation-range: entry 6% entry 34%;
+  }
+}
+
+/* Marquee: one long band, pauses under the cursor. Decorative only. */
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.marquee-mask {
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+}
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 46s linear infinite;
+}
+.marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
+
+/* Live dot: one pulse, small enough to read as a status light. */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 2.4s ease-in-out infinite;
+}
+
+/* Scroll progress hairline. */
+.scroll-progress {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 60;
+  height: 1px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+  .reveal {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .marquee-track,
+  .pulse-dot {
+    animation: none !important;
+  }
+}

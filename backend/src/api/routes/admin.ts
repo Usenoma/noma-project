@@ -2,11 +2,14 @@ import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { config } from "../../config.js";
+import { alert, alertDeliveryConfigured } from "../../lib/alerts.js";
 import { badRequest, unauthorized } from "../../lib/errors.js";
 import {
+  aiKeys,
   cycleExecutionStatus,
   manualRefund,
   revealNextCycle,
+  revokeAiKey,
   scheduleCycle,
   setMarkup,
   setProductActive,
@@ -14,6 +17,8 @@ import {
   suppliers,
 } from "../../modules/admin/service.js";
 import { recordAcquisitions } from "../../modules/rewards/executor.js";
+import { listPaymentClaims, resolvePaymentClaim } from "../../modules/payments/claims.js";
+import { listRefunds, retryRefund, type RefundStatus } from "../../modules/refunds/service.js";
 import { adapters } from "../../suppliers/registry.js";
 import { webhookUrl } from "../../suppliers/webhooks.js";
 
@@ -76,6 +81,65 @@ export async function adminRoutes(app: FastifyInstance) {
   app.post("/orders/:id/refund", async (req) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
     await manualRefund(id);
+    return { ok: true };
+  });
+
+  // Retry a failed refund after the operator has fixed gas/float. Safe to call repeatedly: a
+  // confirmed refund is rejected and the queue job uses a fresh id.
+  app.post("/orders/:id/refund/retry", async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { kind } = z
+      .object({ kind: z.enum(["full", "overpayment"]).default("full") })
+      .parse(req.body ?? {});
+    await retryRefund(id, kind);
+    return { ok: true };
+  });
+
+  // Ops console: refunds that need attention and a test alert for the configured channel.
+  app.get("/refunds", async (req) => {
+    const { status } = z
+      .object({ status: z.enum(["pending", "sent", "confirmed", "failed"]).optional() })
+      .parse(req.query);
+    return { refunds: await listRefunds(status as RefundStatus | undefined) };
+  });
+
+  app.post("/alerts/test", async () => {
+    await alert("test alert from admin console", { source: "admin" }, {
+      kind: "action",
+      key: `admin-test-alert:${Date.now()}`,
+      cooldownSeconds: 0,
+    });
+    return { ok: true, delivery_configured: alertDeliveryConfigured() };
+  });
+
+  // Buyer-reported payments the watcher could not match. Accept credits the order; reject closes it.
+  app.get("/payment-claims", async (req) => {
+    const { status } = z
+      .object({ status: z.enum(["open", "accepted", "rejected"]).optional() })
+      .parse(req.query);
+    return { claims: await listPaymentClaims(status) };
+  });
+
+  app.post("/payment-claims/:id/resolve", async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const body = z
+      .object({
+        action: z.enum(["accept", "reject"]),
+        note: z.string().max(500).optional(),
+      })
+      .parse(req.body);
+    return resolvePaymentClaim(id, body.action, body.note);
+  });
+
+  // AI gateway keys: inspect the balance/usage, or revoke a leaked key.
+  app.get("/ai/keys", async (req) => {
+    const query = z.object({ key: z.string().uuid().optional(), order: z.string().uuid().optional() }).parse(req.query);
+    return { keys: await aiKeys({ keyId: query.key, orderId: query.order }) };
+  });
+
+  app.post("/ai/keys/:id/revoke", async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await revokeAiKey(id);
     return { ok: true };
   });
 

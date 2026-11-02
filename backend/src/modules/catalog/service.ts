@@ -12,9 +12,11 @@ export interface Product {
   specs: Record<string, unknown>;
   price_usd: string;
   required_fields: RequiredField[];
+  available: boolean;
 }
 
-const PUBLIC_COLUMNS = "id, supplier_id, category, title, region, specs, price_usd, required_fields";
+const PUBLIC_COLUMNS =
+  "p.id, p.supplier_id, p.category, p.title, p.region, p.specs, p.price_usd, p.required_fields";
 
 export interface CatalogQuery {
   category?: Category;
@@ -24,6 +26,7 @@ export interface CatalogQuery {
   maxPrice?: number;
   specs?: Record<string, number>; // minimum numeric spec values, e.g. { data_gb: 20 }
   limit?: number;
+  offset?: number;
 }
 
 const SORTS = {
@@ -32,43 +35,82 @@ const SORTS = {
   title: "title ASC",
 } as const;
 
-export async function listProducts(query: CatalogQuery): Promise<Product[]> {
-  const where = ["active"];
+function buildWhere(query: CatalogQuery): { clause: string; params: unknown[] } {
+  // VPN and proxy are retired from the marketplace; the filter lives here so no query path
+  // (catalog, facets, orders, the agent, capsules) can see or sell them again.
+  const where = ["p.active", "p.category NOT IN ('vpn', 'proxy')"];
   const params: unknown[] = [];
   const add = (sql: string, value: unknown) => {
     params.push(value);
     where.push(sql.replace("?", `$${params.length}`));
   };
 
-  if (query.category) add("category = ?", query.category);
+  if (query.category) add("p.category = ?", query.category);
   if (query.region) {
     params.push(query.region.toUpperCase());
-    where.push(`(upper(region) = $${params.length} OR specs -> 'countries' ? $${params.length})`);
+    where.push(`(upper(p.region) = $${params.length} OR p.specs -> 'countries' ? $${params.length})`);
   }
-  if (query.q) add("to_tsvector('simple', title) @@ plainto_tsquery('simple', ?)", query.q);
-  if (query.maxPrice !== undefined) add("price_usd <= ?", query.maxPrice);
+  if (query.q) add("to_tsvector('simple', p.title) @@ plainto_tsquery('simple', ?)", query.q);
+  if (query.maxPrice !== undefined) add("p.price_usd <= ?", query.maxPrice);
   for (const [key, min] of Object.entries(query.specs ?? {})) {
     if (!/^[a-z0-9_]+$/.test(key)) continue;
-    add(`(specs->>'${key}')::numeric >= ?`, min);
+    add(`(p.specs->>'${key}')::numeric >= ?`, min);
   }
+  return { clause: where.join(" AND "), params };
+}
 
-  params.push(Math.min(query.limit ?? 50, 200));
+export async function listProducts(query: CatalogQuery): Promise<Product[]> {
+  const { clause, params } = buildWhere(query);
+  const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
+  const offset = Math.max(query.offset ?? 0, 0);
+  params.push(limit, offset);
   const { rows } = await db.query<Product>(
-    `SELECT ${PUBLIC_COLUMNS} FROM products WHERE ${where.join(" AND ")}
-     ORDER BY ${SORTS[query.sort ?? "price_asc"]} LIMIT $${params.length}`,
+    `SELECT ${PUBLIC_COLUMNS},
+            (s.balance_usd IS NULL OR s.balance_usd >= p.cost_usd) AS available
+     FROM products p LEFT JOIN suppliers s ON s.id = p.supplier_id
+     WHERE ${clause}
+     ORDER BY ${SORTS[query.sort ?? "price_asc"]} LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
   return rows;
 }
 
+export async function countProducts(query: CatalogQuery): Promise<number> {
+  const { clause, params } = buildWhere(query);
+  const { rows } = await db.query<{ total: string }>(
+    `SELECT count(*)::text AS total FROM products p WHERE ${clause}`,
+    params,
+  );
+  return Number(rows[0]?.total ?? 0);
+}
+
+/** Region counts for the current filter set (the caller leaves out the region filter). */
+export async function regionFacets(query: CatalogQuery): Promise<{ region: string; count: number }[]> {
+  const { clause, params } = buildWhere(query);
+  const { rows } = await db.query<{ region: string; count: string }>(
+    `SELECT p.region, count(*)::text AS count FROM products p
+     WHERE ${clause} AND p.region IS NOT NULL AND p.region <> ''
+     GROUP BY p.region ORDER BY p.region`,
+    params,
+  );
+  return rows.map((r) => ({ region: r.region, count: Number(r.count) }));
+}
+
 export async function getProduct(id: string): Promise<Product | undefined> {
-  const { rows } = await db.query<Product>(`SELECT ${PUBLIC_COLUMNS} FROM products WHERE id = $1 AND active`, [id]);
+  const { rows } = await db.query<Product>(
+    `SELECT ${PUBLIC_COLUMNS}, (s.balance_usd IS NULL OR s.balance_usd >= p.cost_usd) AS available
+     FROM products p LEFT JOIN suppliers s ON s.id = p.supplier_id
+     WHERE p.id = $1 AND p.active AND p.category NOT IN ('vpn', 'proxy')`,
+    [id],
+  );
   return rows[0];
 }
 
 export async function getProducts(ids: string[]): Promise<Product[]> {
   const { rows } = await db.query<Product>(
-    `SELECT ${PUBLIC_COLUMNS} FROM products WHERE id = ANY($1::uuid[]) AND active`,
+    `SELECT ${PUBLIC_COLUMNS}, (s.balance_usd IS NULL OR s.balance_usd >= p.cost_usd) AS available
+     FROM products p LEFT JOIN suppliers s ON s.id = p.supplier_id
+     WHERE p.id = ANY($1::uuid[]) AND p.active AND p.category NOT IN ('vpn', 'proxy')`,
     [ids],
   );
   return rows;

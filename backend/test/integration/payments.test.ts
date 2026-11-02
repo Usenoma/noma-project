@@ -18,12 +18,14 @@ import { fulfill, NUDGE_JOB, nudgeFulfillment, onFulfillmentJobFailed, processFu
 import { createOrder } from "../../src/modules/orders/service.js";
 import { watchPayments } from "../../src/modules/payments/watcher.js";
 import { processRefund } from "../../src/modules/refunds/service.js";
+import { walletAuthMessage } from "../../src/lib/walletAuth.js";
 import { createMockEsimAdapter } from "../../src/suppliers/mock.js";
 import { adapter } from "../../src/suppliers/registry.js";
 import { webhookToken } from "../../src/suppliers/webhooks.js";
 import { TEST_USDC_BYTECODE } from "../contracts/testUsdc.js";
 
-const USDC = config.USDC_ADDRESS as Address;
+const USDG = config.USDG_ADDRESS as Address;
+const PAYMENT = config.PAYMENT_ADDRESS as Address;
 const deployer = privateKeyToAccount("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"); // also refund wallet
 const payer = privateKeyToAccount("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
 
@@ -36,17 +38,17 @@ const mintAbi = [
   { type: "function", name: "mint", stateMutability: "nonpayable", inputs: [{ type: "address" }, { type: "uint256" }], outputs: [] },
 ] as const;
 
-const usdcBalance = (a: Address) => anvil.readContract({ address: USDC, abi: erc20Abi, functionName: "balanceOf", args: [a] });
+const usdgBalance = (a: Address) => anvil.readContract({ address: USDG, abi: erc20Abi, functionName: "balanceOf", args: [a] });
 
-async function pay(to: Address, amount: bigint) {
-  const hash = await payerWallet.writeContract({ address: USDC, abi: erc20Abi, functionName: "transfer", args: [to, amount] });
+async function pay(amount: bigint) {
+  const hash = await payerWallet.writeContract({ address: USDG, abi: erc20Abi, functionName: "transfer", args: [PAYMENT, amount] });
   await anvil.waitForTransactionReceipt({ hash });
   await anvil.mine({ blocks: config.PAYMENT_CONFIRMATIONS });
 }
 
 let productId: string;
 
-async function newOrder(payAsset: "USDC" | "ETH" = "USDC") {
+async function newOrder(payAsset: "USDG" | "ETH" = "USDG") {
   const { orderId, invoice } = await createOrder({ productId, fields: {}, payAsset });
   return { orderId, payTo: invoice.pay_to as Address, amount: BigInt(invoice.amount) };
 }
@@ -66,9 +68,9 @@ beforeAll(async () => {
 
   const hash = await deployerWallet.deployContract({ abi: mintAbi, bytecode: TEST_USDC_BYTECODE });
   const receipt = await anvil.waitForTransactionReceipt({ hash });
-  expect(receipt.contractAddress?.toLowerCase()).toBe(USDC.toLowerCase());
+  expect(receipt.contractAddress?.toLowerCase()).toBe(USDG.toLowerCase());
   for (const to of [payer.address, deployer.address]) {
-    await deployerWallet.writeContract({ address: USDC, abi: mintAbi, functionName: "mint", args: [to, 1_000_000_000n] });
+    await deployerWallet.writeContract({ address: USDG, abi: mintAbi, functionName: "mint", args: [to, 1_000_000_000n] });
   }
 
   const mock = createMockEsimAdapter();
@@ -91,12 +93,18 @@ describe("catalog sync", () => {
     const { rows } = await db.query("SELECT title FROM products WHERE supplier_id = 'mock-esim' AND supplier_sku = $1", [listed[0]!.supplierSku]);
     expect(rows).toEqual([{ title: listed[0]!.title }]);
   });
+
+  it("refuses an order the supplier balance cannot cover", async () => {
+    await db.query("UPDATE suppliers SET balance_usd = 0 WHERE id = 'mock-esim'");
+    await expect(newOrder()).rejects.toThrow(/out of stock/);
+    await db.query("UPDATE suppliers SET balance_usd = NULL WHERE id = 'mock-esim'");
+  });
 });
 
-describe("payment watcher on a real chain", () => {
+describe("payment watcher (fixed address + unique amount)", () => {
   it("exact payment → paid → fulfilled", async () => {
     const o = await newOrder();
-    await pay(o.payTo, o.amount);
+    await pay(o.amount);
     await watchPayments();
     expect(await orderStatus(o.orderId)).toBe("paid");
     const inv = (await db.query("SELECT payer_address, received FROM invoices WHERE order_id = $1", [o.orderId])).rows[0];
@@ -109,7 +117,7 @@ describe("payment watcher on a real chain", () => {
 
   it("does not confirm before enough confirmations", async () => {
     const o = await newOrder();
-    const hash = await payerWallet.writeContract({ address: USDC, abi: erc20Abi, functionName: "transfer", args: [o.payTo, o.amount] });
+    const hash = await payerWallet.writeContract({ address: USDG, abi: erc20Abi, functionName: "transfer", args: [PAYMENT, o.amount] });
     await anvil.waitForTransactionReceipt({ hash });
     await watchPayments();
     expect(await invoiceStatus(o.orderId)).toBe("seen");
@@ -117,30 +125,6 @@ describe("payment watcher on a real chain", () => {
     await anvil.mine({ blocks: config.PAYMENT_CONFIRMATIONS });
     await watchPayments();
     expect(await orderStatus(o.orderId)).toBe("paid");
-  });
-
-  it("overpayment → order paid + excess refunded exactly once", async () => {
-    const o = await newOrder();
-    const excess = 5_000_000n; // 5 USDC
-    await pay(o.payTo, o.amount + excess);
-    await watchPayments();
-    expect(await orderStatus(o.orderId)).toBe("paid");
-
-    const before = await usdcBalance(payer.address);
-    await processRefund(o.orderId, "overpayment");
-    await processRefund(o.orderId, "overpayment"); // retried job must not send again
-    expect((await usdcBalance(payer.address)) - before).toBe(excess);
-    const { rows } = await db.query("SELECT status, amount FROM refunds WHERE order_id = $1 AND kind = 'overpayment'", [o.orderId]);
-    expect(rows[0]).toMatchObject({ status: "confirmed", amount: excess.toString() });
-  });
-
-  it("dust overpayment is not refunded", async () => {
-    const o = await newOrder();
-    await pay(o.payTo, o.amount + 100_000n); // 0.10 USDC < 0.50 minimum
-    await watchPayments();
-    expect(await orderStatus(o.orderId)).toBe("paid");
-    const { rowCount } = await db.query("SELECT 1 FROM refunds WHERE order_id = $1", [o.orderId]);
-    expect(rowCount).toBe(0);
   });
 
   it("unpaid invoice expires", async () => {
@@ -151,91 +135,60 @@ describe("payment watcher on a real chain", () => {
     expect(await orderStatus(o.orderId)).toBe("expired");
   });
 
+  it("expires a legacy invoice whose asset can no longer be scanned", async () => {
+    const o = await newOrder();
+    await db.query("UPDATE invoices SET asset = 'USDC', expires_at = now() - interval '10 minutes' WHERE order_id = $1", [o.orderId]);
+    await watchPayments();
+    expect(await invoiceStatus(o.orderId)).toBe("expired");
+    expect(await orderStatus(o.orderId)).toBe("expired");
+  });
+
   it("payment after expiry → full refund, order refunded", async () => {
     const o = await newOrder();
     await db.query("UPDATE invoices SET expires_at = now() - interval '10 minutes' WHERE order_id = $1", [o.orderId]);
     await watchPayments(); // expires
-    await pay(o.payTo, o.amount);
+    await pay(o.amount);
     await watchPayments();
     expect(await invoiceStatus(o.orderId)).toBe("late_paid");
     expect(await orderStatus(o.orderId)).toBe("refunding");
 
-    const before = await usdcBalance(payer.address);
+    const before = await usdgBalance(payer.address);
     await processRefund(o.orderId);
-    expect((await usdcBalance(payer.address)) - before).toBe(o.amount);
+    expect((await usdgBalance(payer.address)) - before).toBe(o.amount);
     expect(await orderStatus(o.orderId)).toBe("refunded");
   });
 
   it("payment landing on a pending invoice after the deadline is treated as late", async () => {
     const o = await newOrder();
     await db.query("UPDATE invoices SET expires_at = now() - interval '10 minutes' WHERE order_id = $1", [o.orderId]);
-    await pay(o.payTo, o.amount); // never seen before expiry
+    await pay(o.amount); // never seen before expiry
     await watchPayments();
     expect(await invoiceStatus(o.orderId)).toBe("late_paid");
     expect(await orderStatus(o.orderId)).toBe("refunding");
   });
+});
 
-  it("underpayment is held, then refunded after the grace period", async () => {
-    const o = await newOrder();
-    const partial = o.amount / 2n;
-    await pay(o.payTo, partial);
-    await watchPayments();
-    expect(await invoiceStatus(o.orderId)).toBe("underpaid");
-
-    // still within grace after expiry: held for a top-up
-    await db.query("UPDATE invoices SET expires_at = now() - interval '1 hour' WHERE order_id = $1", [o.orderId]);
-    await watchPayments();
-    expect(await invoiceStatus(o.orderId)).toBe("underpaid");
-
-    await db.query("UPDATE invoices SET expires_at = now() - interval '25 hours' WHERE order_id = $1", [o.orderId]);
-    await watchPayments();
-    expect(await invoiceStatus(o.orderId)).toBe("late_paid");
-
-    const before = await usdcBalance(payer.address);
-    await processRefund(o.orderId);
-    expect((await usdcBalance(payer.address)) - before).toBe(partial);
-    expect(await orderStatus(o.orderId)).toBe("refunded");
+describe("native ETH (fixed address + unique amount)", () => {
+  beforeAll(async () => {
+    await redis.set("price:ETH", "3000");
   });
 
-  it("underpayment topped up in time → paid", async () => {
-    const o = await newOrder();
-    await pay(o.payTo, o.amount - 1_000_000n);
-    await watchPayments();
-    expect(await invoiceStatus(o.orderId)).toBe("underpaid");
-    await pay(o.payTo, 1_000_000n);
+  it("exact ETH payment → paid", async () => {
+    const o = await newOrder("ETH");
+    const hash = await payerWallet.sendTransaction({ to: PAYMENT, value: o.amount });
+    await anvil.waitForTransactionReceipt({ hash });
+    await anvil.mine({ blocks: config.PAYMENT_CONFIRMATIONS });
     await watchPayments();
     expect(await orderStatus(o.orderId)).toBe("paid");
+    const inv = (await db.query("SELECT payer_address, tx_hash FROM invoices WHERE order_id = $1", [o.orderId])).rows[0];
+    expect(inv.payer_address).toBe(payer.address.toLowerCase());
+    expect(inv.tx_hash).toBe(hash);
   });
 
-  describe("native ETH", () => {
-    beforeAll(async () => {
-      await redis.set("price:ETH", "3000");
-    });
-
-    it("finds the payer by binary search and refunds an ETH overpayment", async () => {
-      await anvil.mine({ blocks: 50 }); // put the invoice start well inside a longer chain
-      const o = await newOrder("ETH");
-      await anvil.mine({ blocks: 37 });
-      const excess = 10n ** 16n; // 0.01 ETH ≈ $30
-      const hash = await payerWallet.sendTransaction({ to: o.payTo, value: o.amount + excess });
-      await anvil.waitForTransactionReceipt({ hash });
-      await anvil.mine({ blocks: 20 });
-
-      await watchPayments();
-      expect(await orderStatus(o.orderId)).toBe("paid");
-      const inv = (await db.query("SELECT payer_address, tx_hash FROM invoices WHERE order_id = $1", [o.orderId])).rows[0];
-      expect(inv).toMatchObject({ payer_address: payer.address.toLowerCase(), tx_hash: hash });
-
-      const before = await anvil.getBalance({ address: payer.address });
-      await processRefund(o.orderId, "overpayment");
-      expect((await anvil.getBalance({ address: payer.address })) - before).toBe(excess);
-    });
-
-    it("ETH checkout is disabled without a fresh price", async () => {
-      await redis.del("price:ETH");
-      await expect(newOrder("ETH")).rejects.toThrow(/temporarily unavailable/);
-      await redis.set("price:ETH", "3000");
-    });
+  it("ETH checkout is disabled without a fresh price", async () => {
+    await redis.del("price:ETH");
+    await expect(newOrder("ETH")).rejects.toThrow(/temporarily unavailable/);
+    await redis.set("price:ETH", "3000");
   });
 });
 
@@ -249,7 +202,7 @@ describe("supplier webhooks", () => {
 
   it("re-checks an order that is still being fulfilled, and only that", async () => {
     const o = await newOrder();
-    await pay(o.payTo, o.amount);
+    await pay(o.amount);
     await watchPayments();
     const token = webhookToken("mock-esim");
 
@@ -299,7 +252,7 @@ describe("supplier webhooks", () => {
 
   it("a failing nudge leaves the order alone; only the order's own last attempt fails and refunds it", async () => {
     const o = await newOrder();
-    await pay(o.payTo, o.amount);
+    await pay(o.amount);
     await watchPayments();
     // already placed at the supplier, which now reports the order as failed
     await db.query("UPDATE orders SET status = 'fulfilling' WHERE id = $1", [o.orderId]);
@@ -363,7 +316,7 @@ describe("supplier still working", () => {
 
     await queue(QUEUE.fulfillment).obliterate({ force: true });
     const o = await newOrder();
-    await pay(o.payTo, o.amount);
+    await pay(o.amount);
     await watchPayments(); // queues the order's own job: 5 attempts
     const job = async () => (await queue(QUEUE.fulfillment).getJob(`fulfill-${o.orderId}`))!;
     expect((await job()).opts.attempts).toBe(5);
@@ -420,6 +373,55 @@ describe("supplier still working", () => {
       await worker.close();
       config.ALERT_WEBHOOK_URL = undefined;
       sink.close();
+    }
+  });
+});
+
+describe("wallet session and payer access", () => {
+  it("reads a paid order by wallet and paginates the aggregate", async () => {
+    const o = await newOrder();
+    await pay(o.amount);
+    await watchPayments();
+
+    const timestamp = Date.now();
+    const signature = await payer.signMessage({ message: walletAuthMessage(payer.address, timestamp) });
+    const app = buildServer();
+    try {
+      const session = await app.inject({
+        method: "POST",
+        url: "/auth/wallet",
+        payload: { address: payer.address, signature, timestamp },
+      });
+      expect(session.statusCode).toBe(200);
+      const token = session.json().token as string;
+      const headers = { authorization: `Bearer ${token}` };
+
+      const list = await app.inject({ method: "GET", url: "/orders?limit=1&offset=0", headers });
+      expect(list.statusCode).toBe(200);
+      const body = list.json() as {
+        total: number;
+        spend_usd: string;
+        orders: { id: string }[];
+        limit: number;
+        offset: number;
+      };
+      expect(body.total).toBeGreaterThan(0);
+      expect(body.orders).toHaveLength(1);
+      expect(Number(body.spend_usd)).toBeGreaterThan(0);
+
+      const detail = await app.inject({ method: "GET", url: `/orders/${o.orderId}`, headers });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json().invoice.payer_address).toBe(payer.address.toLowerCase());
+
+      expect((await app.inject({ method: "GET", url: `/orders/${o.orderId}` })).statusCode).toBe(401);
+      expect((await app.inject({ method: "GET", url: "/orders?limit=1" })).statusCode).toBe(401);
+
+      const page2 = await app.inject({ method: "GET", url: "/orders?limit=1&offset=1", headers });
+      expect(page2.statusCode).toBe(200);
+      expect(page2.json().total).toBe(body.total);
+      expect(page2.json().offset).toBe(1);
+    } finally {
+      await app.close();
     }
   });
 });

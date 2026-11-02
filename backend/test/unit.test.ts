@@ -1,18 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { HDKey, mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
-import { mnemonicToSeedSync } from "@scure/bip39";
+import { privateKeyToAccount } from "viem/accounts";
 import { decrypt, encrypt, generateOrderKey, hashOrderKey, verifyOrderKey } from "../src/lib/crypto.js";
 import { verifyWalletAuth, walletAuthMessage } from "../src/lib/walletAuth.js";
+import { issueWalletSession, verifyWalletSession } from "../src/lib/walletSession.js";
 import { applyMarkup } from "../src/modules/catalog/pricing.js";
 import { usdToUnits } from "../src/modules/payments/units.js";
 import { creatorFeeShare, cyclePool, pendingCreatorPayout } from "../src/modules/rewards/poolMath.js";
 import { rawToUsd } from "../src/modules/rewards/quoteAsset.js";
 import { allowedFrom, canTransition } from "../src/modules/orders/status.js";
-import { depositAddress } from "../src/chain/depositAddress.js";
 import { combineQuotes } from "../src/modules/payments/priceFeed.js";
 import { pickRequiredFields } from "../src/modules/orders/service.js";
 import { formatAlert } from "../src/lib/alerts.js";
 import { failureRateExceeded, quietSeconds } from "../src/modules/health/monitor.js";
+import { aliasValues } from "../src/modules/identity/service.js";
+import { recommend } from "../src/modules/subscriptions/service.js";
 
 describe("crypto", () => {
   const key = Buffer.alloc(32, 1);
@@ -77,16 +78,6 @@ describe("pricing", () => {
   });
 });
 
-describe("deposit addresses", () => {
-  it("derives the same addresses from the xpub as the wallet does from the mnemonic", () => {
-    const mnemonic = "test test test test test test test test test test test junk";
-    const node = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic)).derive("m/44'/60'/0'/0");
-    for (const i of [0, 1, 42]) {
-      expect(depositAddress(BigInt(i), node.publicExtendedKey)).toBe(mnemonicToAccount(mnemonic, { addressIndex: i }).address);
-    }
-  });
-});
-
 describe("wallet auth", () => {
   it("accepts a fresh signature and rejects stale or foreign ones", async () => {
     const account = privateKeyToAccount(`0x${"11".repeat(32)}`);
@@ -96,6 +87,17 @@ describe("wallet auth", () => {
     expect(await verifyWalletAuth(account.address, signature, String(now), now + 10 * 60_000)).toBeNull();
     const other = privateKeyToAccount(`0x${"22".repeat(32)}`).address;
     expect(await verifyWalletAuth(other, signature, String(now), now)).toBeNull();
+  });
+
+  it("issues read-only sessions that expire and reject tampering", () => {
+    const address = `0x8E4f${"0".repeat(32)}5FFe`;
+    const now = Date.UTC(2026, 0, 1);
+    const session = issueWalletSession(address, now);
+    expect(session.address).toBe(address.toLowerCase());
+    expect(verifyWalletSession(session.token, now + 1000)).toBe(address.toLowerCase());
+    expect(verifyWalletSession(session.token, Date.parse(session.expires_at) + 1)).toBeNull();
+    expect(verifyWalletSession(session.token.replace("noma_ws_", "noma_ws_x"), now)).toBeNull();
+    expect(verifyWalletSession("noma_ws_invalid", now)).toBeNull();
   });
 });
 
@@ -139,5 +141,55 @@ describe("health monitor", () => {
     expect(quietSeconds(null, start + 60_000, start)).toBe(60);
     expect(quietSeconds(start - 86_400_000, start + 30_000, start)).toBe(30); // stale key from before a restart
     expect(quietSeconds(start + 50_000, start + 80_000, start)).toBe(30);
+  });
+});
+
+describe("ghost checkout aliases", () => {
+  it("keeps delivery email real and aliases other provided fields", () => {
+    const required = [
+      { name: "email", label: "Email", type: "email" as const },
+      { name: "username", label: "Username", type: "string" as const },
+      { name: "country", label: "Country", type: "country" as const },
+    ];
+    const { fields, aliases } = aliasValues(
+      required,
+      { email: "real@example.com", username: "alice" },
+      "abc123",
+    );
+
+    expect(fields.email).toBe("real@example.com"); // delivery stays real
+    expect(fields.username).toBe("noma-abc123-username"); // aliased
+    expect(fields.country).toBeUndefined(); // not provided → not sent
+    expect(aliases.find((a) => a.field === "email")?.aliased).toBe(false);
+    expect(aliases.find((a) => a.field === "username")?.aliased).toBe(true);
+  });
+});
+
+describe("subscription recommendations", () => {
+  const base = {
+    id: "s1",
+    owner: "0x0000000000000000000000000000000000000000",
+    service: "VPN 30 days",
+    supplier_id: null,
+    renewal_at: null,
+    price_usd: null,
+    status: "active" as const,
+    last_seen_at: null,
+  };
+  const now = Date.UTC(2026, 0, 1);
+
+  it("flags stale usage", () => {
+    const seen = new Date(now - 50 * 86_400_000).toISOString();
+    expect(recommend({ ...base, last_seen_at: seen }, now)).toBe("unused? no login in 50 days");
+  });
+
+  it("flags an imminent renewal", () => {
+    const renewal = new Date(now + 2 * 86_400_000).toISOString();
+    expect(recommend({ ...base, renewal_at: renewal }, now)).toBe("renews in 2 days");
+  });
+
+  it("says nothing without evidence, and nothing for a finished subscription", () => {
+    expect(recommend(base, now)).toBeNull();
+    expect(recommend({ ...base, status: "cancelled" }, now)).toBeNull();
   });
 });

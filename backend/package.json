@@ -12,15 +12,13 @@
     "build": "tsc -p tsconfig.json",
     "start:api": "node --env-file-if-exists=.env dist/main.js",
     "start:workers": "node --env-file-if-exists=.env dist/workers/main.js",
-    "sweeper": "tsx --env-file-if-exists=.env src/sweeper/main.ts",
-    "start:sweeper": "node --env-file-if-exists=.env dist/sweeper/main.js",
     "migrate": "tsx --env-file-if-exists=.env src/db/migrate.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:integration": "bash test/integration/run.sh"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.129.0",
+    "@fastify/cors": "^11.3.1",
     "@fastify/rate-limit": "^10.2.1",
     "@noble/curves": "^1.8.1",
     "bullmq": "^5.34.0",

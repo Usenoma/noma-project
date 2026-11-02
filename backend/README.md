@@ -12,7 +12,7 @@ npm run migrate
 npm run dev:api                   # http://localhost:3000
 npm run dev:workers
 npm test
-npm run test:integration        # anvil (docker) + test USDC: payment/refund flows on a real chain
+npm run test:integration        # anvil (docker) + test USDG: payment/refund flows on a real chain
 ```
 
 Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
@@ -25,13 +25,14 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
 | `src/modules/*` | Domain logic per module (backend.md §2) |
 | `src/suppliers` | `SupplierAdapter` interface, registry, adapters |
 | `src/workers/main.ts` | All BullMQ processors + repeatable schedules |
-| `src/chain` | viem clients, ABIs, xpub deposit addresses, `sendOnce` |
+| `src/chain` | viem clients, ABIs, `sendOnce` |
 | `migrations/` | Plain SQL, applied in order by `npm run migrate` |
 
 ## Invariants
 
 - **Order key** is returned once by `POST /orders`; only its sha256 is stored.
-- **Deposit addresses** are derived from `PAYMENT_XPUB`; the API never holds the payment private key.
+- **Payments** go wallet-to-wallet into one fixed `PAYMENT_ADDRESS`; the invoice is identified by a
+  unique amount (no per-invoice deposit address, no custody, no sweeper).
 - **Fund-moving txs** (refunds) go through `sendOnce`: signed tx + hash are
   written to `chain_txs` before broadcast, so a crashed job resumes without double-sending.
 - **Fulfillment** uses `idempotency_key = order id`; once a supplier order id is recorded, retries only poll.
@@ -62,10 +63,17 @@ from `GET /admin/webhooks` in their console. The URL contains a secret: treat it
 
 ## Payments
 
-- ETH/USD from Coinbase + Kraken (needs both, <2% apart); stale price (>120 s) disables ETH checkout.
-- Overpayment ≥ `OVERPAY_REFUND_MIN_USD` is refunded; late payments and underpayments not topped up
-  within 24 h after expiry are refunded in full. Payer = ERC-20 Transfer sender, or for native ETH the
-  sender found by binary-searching the deposit balance.
+- Buyers pay wallet-to-wallet into one fixed `PAYMENT_ADDRESS` (native ETH or ERC-20 USDG). Each
+  invoice has a unique amount (trailing base units carry the invoice index), so the watcher attributes
+  a payment by exact-amount match — no per-invoice deposit address, no sweeper, no escrow.
+- ETH/USD price from Coinbase + Kraken (needs both, <2% apart); stale price (>120 s) disables ETH checkout.
+- Late payments (exact amount after expiry) are refunded in full when `REFUNDS_AUTO_ENABLED=1`
+  (default). **On the build server automatic refunds are off** (`REFUNDS_AUTO_ENABLED=0`): late,
+  underpaid, overpayment, and failed-fulfillment funds are held at the payment address for manual
+  operator handling. The buyer UI says automatic refunds are disabled; the refund-wallet low alert is
+  skipped. Manual `POST /admin/orders/:id/refund` and the refund retry endpoint remain available.
+  Set `REFUNDS_AUTO_ENABLED=1` and restart API/workers to re-enable.
+- Payer = ERC-20 Transfer sender, or for native ETH the transaction sender.
 
 ## Not done yet
 

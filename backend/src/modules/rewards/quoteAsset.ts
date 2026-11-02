@@ -17,10 +17,10 @@ export async function quoteDecimals(): Promise<number> {
   return pairDecimals;
 }
 
-/** Only ETH and USDC have a USD price here; any other pair token is left unpriced. */
+/** Only ETH and USDG have a USD price here; any other pair token is left unpriced. */
 async function quotePrice(): Promise<number> {
   if (isEthQuote()) return usdPrice("ETH");
-  if (config.USDC_ADDRESS && quoteToken().toLowerCase() === config.USDC_ADDRESS.toLowerCase()) return usdPrice("USDC");
+  if (config.USDG_ADDRESS && quoteToken().toLowerCase() === config.USDG_ADDRESS.toLowerCase()) return usdPrice("USDG");
   throw new Error(`no USD price for quote asset ${config.NOMA_QUOTE_ASSET}`);
 }
 

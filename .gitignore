@@ -1,4 +1,12 @@
 node_modules/
 dist/
+.next/
 .env
+.env.*
+!.env.example
+!**/.env.example
+.commandcode/
 *.log
+
+# raw brand source media — only the compressed public/brand files are tracked
+frontend/Noma Assets/

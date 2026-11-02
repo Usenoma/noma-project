@@ -3,12 +3,37 @@ import { refundWallet } from "../../chain/client.js";
 import { sendOnce } from "../../chain/sendOnce.js";
 import { erc20Abi } from "../../chain/abis/index.js";
 import { db, tx } from "../../db/pool.js";
+import { alert } from "../../lib/alerts.js";
+import { badRequest, notFound } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { QUEUE, queue } from "../../queues.js";
 import { assetInfo, type PayAsset } from "../payments/assets.js";
 import { transition } from "../orders/service.js";
 
 export type RefundKind = "full" | "overpayment";
+export type RefundStatus = "pending" | "sent" | "confirmed" | "failed";
+
+export interface RefundListRow {
+  id: string;
+  order_id: string;
+  kind: RefundKind;
+  amount: string;
+  asset: string;
+  to_address: string;
+  tx_hash: string | null;
+  status: RefundStatus;
+  created_at: Date;
+}
+
+export async function listRefunds(status?: RefundStatus): Promise<RefundListRow[]> {
+  const { rows } = await db.query<RefundListRow>(
+    `SELECT id, order_id, kind, amount, asset, to_address, tx_hash, status, created_at
+     FROM refunds WHERE ($1::text IS NULL OR status = $1)
+     ORDER BY created_at DESC LIMIT 100`,
+    [status ?? null],
+  );
+  return rows;
+}
 
 const enqueue = (orderId: string, kind: RefundKind) =>
   queue(QUEUE.refund).add("refund", { orderId, kind }, { jobId: `refund-${kind}-${orderId}` });
@@ -76,6 +101,11 @@ export async function processRefund(orderId: string, kind: RefundKind = "full"):
     receipt = await sendOnce(kind === "full" ? `refund:${orderId}` : `refund-${kind}:${orderId}`, refundWallet(), req);
   } catch (err) {
     await db.query("UPDATE refunds SET status = 'failed' WHERE id = $1", [refund.id]);
+    await alert(
+      "refund failed",
+      { orderId, kind, err: String(err) },
+      { kind: "action", key: `refund-failed:${orderId}:${kind}`, cooldownSeconds: 6 * 3600 },
+    );
     throw err;
   }
   logger.info({ orderId, kind, hash: receipt.transactionHash }, "refund confirmed");
@@ -83,4 +113,26 @@ export async function processRefund(orderId: string, kind: RefundKind = "full"):
     await client.query("UPDATE refunds SET status = 'confirmed', tx_hash = $2 WHERE id = $1", [refund.id, receipt.transactionHash]);
     if (kind === "full") await transition(client, orderId, "refunded");
   });
+}
+
+/**
+ * Re-enqueue a failed refund after an operator has fixed the cause (e.g. topped up gas/float).
+ * The row is reset to pending and a new job id is used so a stale failed job cannot swallow it.
+ */
+export async function retryRefund(orderId: string, kind: RefundKind = "full"): Promise<void> {
+  const { rows } = await db.query<{ id: string; status: string }>(
+    "SELECT id, status FROM refunds WHERE order_id = $1 AND kind = $2",
+    [orderId, kind],
+  );
+  const refund = rows[0];
+  if (!refund) throw notFound("refund");
+  if (refund.status === "confirmed") throw badRequest("refund already confirmed");
+
+  await db.query("UPDATE refunds SET status = 'pending' WHERE id = $1", [refund.id]);
+  await queue(QUEUE.refund).add(
+    "refund",
+    { orderId, kind },
+    { jobId: `refund-${kind}-${orderId}-retry-${Date.now()}` },
+  );
+  logger.info({ orderId, kind, refundId: refund.id }, "refund retry queued");
 }

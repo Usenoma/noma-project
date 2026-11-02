@@ -1,6 +1,5 @@
 import { Worker, type Job, type Processor } from "bullmq";
 import { chainConfigured } from "../chain/client.js";
-import { assertNoSweeperSecrets } from "../config.js";
 import { db } from "../db/pool.js";
 import { alert } from "../lib/alerts.js";
 import { logger } from "../lib/logger.js";
@@ -10,6 +9,7 @@ import { refreshEthPrice } from "../modules/payments/priceFeed.js";
 import { watchPayments } from "../modules/payments/watcher.js";
 import { checkHealth, markRun, workersHeartbeat } from "../modules/health/monitor.js";
 import { processRefund, type RefundKind } from "../modules/refunds/service.js";
+import { reapStaleReservations } from "../modules/ai/service.js";
 import { advanceCycle, executeDueCycle } from "../modules/rewards/executor.js";
 import { indexRewards } from "../modules/rewards/indexer.js";
 import { indexStaking } from "../modules/staking/indexer.js";
@@ -90,6 +90,11 @@ const processors: Record<QueueName, Processor> = {
     job.data.cycleId ? advanceCycle(job.data.cycleId) : executeDueCycle(),
   // stale pollers, stuck RPC head, fulfillment failure rate
   [QUEUE.health]: checkHealth,
+  // a crashed AI request must not hold prepaid credit forever
+  [QUEUE.aiReaper]: async () => {
+    const released = await reapStaleReservations();
+    if (released) logger.warn({ released }, "released stale AI reservations");
+  },
 };
 
 /** Repeatable schedules (backend.md §10). Chain workers only run once the chain is configured. */
@@ -102,10 +107,10 @@ const schedules: { queue: QueueName; everyMs: number; needsChain?: boolean }[] =
   { queue: QUEUE.rewardIndexer, everyMs: 5_000, needsChain: true },
   { queue: QUEUE.rewardExecutor, everyMs: 60_000, needsChain: true },
   { queue: QUEUE.health, everyMs: 60_000 },
+  { queue: QUEUE.aiReaper, everyMs: 5 * 60_000 },
 ];
 
 async function main() {
-  assertNoSweeperSecrets("workers");
   for (const s of schedules) {
     if (s.needsChain && !chainConfigured) {
       logger.warn({ queue: s.queue }, "chain not configured, schedule skipped");

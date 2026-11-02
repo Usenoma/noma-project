@@ -27,6 +27,8 @@ interface BrProduct {
 interface BrInvoice {
   id: string;
   status: string;
+  /** The invoice lifecycle status and the payment status are separate fields. */
+  payment?: { status: string };
   orders?: { id: string; status: string }[];
 }
 interface BrOrder {
@@ -48,8 +50,13 @@ class BitrefillError extends Error {
 
 const FINAL_FAILED_INVOICE = new Set(["denied", "payment_error", "blocked"]);
 
-/** Prices and balances are in the account currency's smallest unit: satoshis for BTC accounts. */
-const MINOR_UNITS: Record<string, number> = { BTC: 1e8 };
+/**
+ * Bitrefill mixes units: product prices are in the account currency's major unit (dollars), while
+ * the account balance is in its smallest unit (cents). Crypto accounts (BTC) use the smallest unit
+ * (satoshis) for both.
+ */
+const FIAT_MINOR: Record<string, number> = { USD: 100, EUR: 100, GBP: 100 };
+const CRYPTO_MINOR: Record<string, number> = { BTC: 1e8 };
 
 /** Cost/face-value bounds for USD-denominated cards: outside them the price unit is wrong, so skip. */
 const MIN_COST_RATIO = 0.5;
@@ -78,7 +85,7 @@ export function createBitrefillAdapter(credentials: string, opts: BitrefillOptio
   const auth = credentials.includes(":")
     ? `Basic ${Buffer.from(credentials).toString("base64")}`
     : `Bearer ${credentials}`;
-  let fx: { currency: string; usdPerUnit: number; at: number } | undefined;
+  let fx: { usdPerPrice: number; usdPerBalance: number; at: number } | undefined;
 
   async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(path.startsWith("http") ? path : `${BASE}${path}`, {
@@ -92,22 +99,29 @@ export function createBitrefillAdapter(credentials: string, opts: BitrefillOptio
     return json as T;
   }
 
-  /** USD value of one account price unit (e.g. 1 satoshi), via Coinbase; cached 10 min. */
-  async function usdPerUnit(): Promise<number> {
-    if (fx && Date.now() - fx.at < 10 * 60_000) return fx.usdPerUnit;
+  /**
+   * USD rates for the account currency, cached 10 min. `usdPerPrice` converts a package price
+   * (major unit) and `usdPerBalance` converts the account balance (smallest unit).
+   */
+  async function rates(): Promise<{ usdPerPrice: number; usdPerBalance: number }> {
+    if (fx && Date.now() - fx.at < 10 * 60_000) return fx;
     const { data } = await call<Page<{ currency: string }>>("GET", "/accounts/balance");
-    let usd = 1;
-    if (data.currency !== "USD") {
-      const res = await fetch(`https://api.coinbase.com/v2/exchange-rates?currency=${data.currency}`, {
+    const currency = data.currency;
+    let usdPerMajor = 1;
+    if (currency !== "USD") {
+      const res = await fetch(`https://api.coinbase.com/v2/exchange-rates?currency=${currency}`, {
         signal: AbortSignal.timeout(5_000),
       });
       const body = (await res.json()) as { data: { rates: Record<string, string> } };
-      usd = Number(body.data.rates.USD);
-      if (!Number.isFinite(usd) || usd <= 0) throw new Error(`no ${data.currency}/USD rate`);
+      usdPerMajor = Number(body.data.rates.USD);
+      if (!Number.isFinite(usdPerMajor) || usdPerMajor <= 0) throw new Error(`no ${currency}/USD rate`);
     }
-    const perUnit = usd / (MINOR_UNITS[data.currency] ?? 1);
-    fx = { currency: data.currency, usdPerUnit: perUnit, at: Date.now() };
-    return perUnit;
+    const fiatMinor = FIAT_MINOR[currency];
+    const cryptoMinor = CRYPTO_MINOR[currency] ?? 1;
+    fx = fiatMinor
+      ? { usdPerPrice: usdPerMajor, usdPerBalance: usdPerMajor / fiatMinor, at: Date.now() }
+      : { usdPerPrice: usdPerMajor / cryptoMinor, usdPerBalance: usdPerMajor / cryptoMinor, at: Date.now() };
+    return fx;
   }
 
   const packageId = (p: BrPackage) => p.package_id ?? p.id ?? "";
@@ -119,7 +133,7 @@ export function createBitrefillAdapter(credentials: string, opts: BitrefillOptio
     catalogTtlMinutes: 6 * 60,
 
     async syncCatalog() {
-      const rate = await usdPerUnit();
+      const { usdPerPrice } = await rates();
       const products: NormalizedProduct[] = [];
       let skipped = 0;
       const params = new URLSearchParams({
@@ -136,7 +150,7 @@ export function createBitrefillAdapter(credentials: string, opts: BitrefillOptio
           for (const pkg of p.packages ?? []) {
             const pid = packageId(pkg);
             if (!pid) continue;
-            const costUsd = Math.round(pkg.price * rate * 100) / 100;
+            const costUsd = Math.round(pkg.price * usdPerPrice * 100) / 100;
             const face = Number(pkg.value);
             const ratio = costUsd / face;
             if (costUsd <= 0 || costUsd > MAX_COST_USD || (p.currency === "USD" && (ratio < MIN_COST_RATIO || ratio > MAX_COST_RATIO))) {
@@ -165,7 +179,8 @@ export function createBitrefillAdapter(credentials: string, opts: BitrefillOptio
       const { data } = await call<Page<BrProduct>>("GET", `/products/${productId}`);
       const pkg = data.packages?.find((p) => packageId(p) === pid);
       if (!pkg) throw new Error(`bitrefill package ${sku} not found`);
-      return { costUsd: pkg.price * (await usdPerUnit()) };
+      const { usdPerPrice } = await rates();
+      return { costUsd: pkg.price * usdPerPrice };
     },
 
     async purchase(sku, _fields, idempotencyKey) {
@@ -182,7 +197,9 @@ export function createBitrefillAdapter(credentials: string, opts: BitrefillOptio
 
     async status(invoiceId): Promise<SupplierStatus> {
       const { data: inv } = await call<Page<BrInvoice>>("GET", `/invoices/${invoiceId}`);
-      if (inv.status === "unpaid") {
+      // An invoice reads "not_delivered" while its payment is still "unpaid": pay on the payment
+      // status, not the invoice status.
+      if (inv.payment?.status === "unpaid" || inv.status === "unpaid") {
         try {
           await call("POST", `/invoices/${invoiceId}/pay`, {});
         } catch (err) {
@@ -211,7 +228,8 @@ export function createBitrefillAdapter(credentials: string, opts: BitrefillOptio
 
     async balance() {
       const { data } = await call<Page<{ balance: number }>>("GET", "/accounts/balance");
-      return data.balance * (await usdPerUnit());
+      const { usdPerBalance } = await rates();
+      return data.balance * usdPerBalance;
     },
   };
 }

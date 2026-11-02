@@ -10,6 +10,7 @@ import { adapter } from "../../suppliers/registry.js";
 import type { Deliverable } from "../../suppliers/types.js";
 import { transition } from "../orders/service.js";
 import { startRefund } from "../refunds/service.js";
+import { recordSubscription } from "../subscriptions/service.js";
 
 export class SupplierPendingError extends Error {}
 
@@ -19,6 +20,10 @@ interface FulfillmentContext {
   customer_fields: string | null;
   status: string;
   duration_days: string | null;
+  wallet_address: string | null;
+  category: string;
+  title: string;
+  price_usd: string;
 }
 
 /** Time-limited resource (e.g. VPS rental) to be released by the expiry job. */
@@ -68,9 +73,34 @@ export async function fulfill(orderId: string): Promise<void> {
   }
 }
 
+/**
+ * Subscription Guardian (gated, post-launch): a delivered rental (VPS/VPN, `duration_days`) bought
+ * from a wallet becomes a subscription record so the dashboard can watch the renewal. Best effort —
+ * never affects delivery, and a no-op while the flag is off.
+ */
+async function maybeRecordSubscription(ctx: FulfillmentContext, orderId: string): Promise<void> {
+  if (process.env.FEATURE_SUBSCRIPTION_GUARDIAN !== "1") return;
+  if (!ctx.wallet_address || !ctx.duration_days) return;
+  const days = Number(ctx.duration_days);
+  if (!Number.isFinite(days) || days <= 0) return;
+  try {
+    await recordSubscription({
+      owner: ctx.wallet_address,
+      service: ctx.title,
+      supplierId: ctx.supplier_id,
+      orderId,
+      renewalAt: new Date(Date.now() + days * 86_400_000),
+      priceUsd: ctx.price_usd,
+    });
+  } catch (err) {
+    logger.warn({ orderId, err: String(err) }, "subscription record failed");
+  }
+}
+
 async function fulfillLocked(orderId: string): Promise<void> {
   const { rows } = await db.query<FulfillmentContext>(
-    `SELECT p.supplier_id, p.supplier_sku, o.customer_fields, o.status, p.specs ->> 'duration_days' AS duration_days
+    `SELECT p.supplier_id, p.supplier_sku, o.customer_fields, o.status, p.specs ->> 'duration_days' AS duration_days,
+            o.wallet_address, p.category, p.title, o.price_usd
      FROM orders o JOIN products p ON p.id = o.product_id WHERE o.id = $1`,
     [orderId],
   );
@@ -106,13 +136,18 @@ async function fulfillLocked(orderId: string): Promise<void> {
       supplierOrderId,
     ]);
     logger.info({ orderId, supplier: supplier.id, supplierOrderId }, "supplier purchase placed");
-    if (res.deliverable) return storeDeliverable(orderId, res.deliverable, lifetimeFor(supplierOrderId));
+    if (res.deliverable) {
+      await storeDeliverable(orderId, res.deliverable, lifetimeFor(supplierOrderId));
+      await maybeRecordSubscription(ctx, orderId);
+      return;
+    }
   }
 
   const status = await supplier.status(supplierOrderId);
   if (status === "pending") throw new SupplierPendingError(`supplier order ${supplierOrderId} pending`);
   if (status === "failed") throw new Error(`supplier order ${supplierOrderId} failed`);
   await storeDeliverable(orderId, await supplier.deliverable(supplierOrderId), lifetimeFor(supplierOrderId));
+  await maybeRecordSubscription(ctx, orderId);
 }
 
 /** While the supplier is still working the order is re-checked at this pace (a webhook nudge may come sooner). */
@@ -181,12 +216,20 @@ export async function nudgeFulfillment(supplierId: string, ref: { orderId: strin
 
 /**
  * Failed-job handler of the fulfillment queue: once the order's own job has used its last attempt
- * the order fails and is refunded. Earlier attempts and webhook nudges change nothing.
+ * the order fails. Automatic refunds can be disabled; held funds then need an operator.
  */
 export async function onFulfillmentJobFailed(job: Job<{ orderId: string }> | undefined, err: Error): Promise<void> {
   if (!job || job.name === NUDGE_JOB || job.attemptsMade < (job.opts.attempts ?? 1)) return;
   const { orderId } = job.data;
   await markFulfillmentFailed(orderId, err.message);
+  if (!config.REFUNDS_AUTO_ENABLED) {
+    await alert(
+      "fulfillment failed; automatic refunds are disabled",
+      { orderId, err: err.message },
+      { kind: "action", key: `refund-disabled:${orderId}`, cooldownSeconds: 6 * 3600 },
+    );
+    return;
+  }
   await startRefund(orderId).catch((e) => alert("refund could not start", { orderId, err: e.message }, { key: `refund-start:${orderId}` }));
 }
 

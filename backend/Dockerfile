@@ -1,5 +1,5 @@
 # One image for every backend process; the command picks the role:
-#   api (default) | workers | sweeper | migrate
+#   api (default) | workers | migrate
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./

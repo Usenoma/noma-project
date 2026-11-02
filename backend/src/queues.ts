@@ -12,6 +12,7 @@ export const QUEUE = {
   rewardIndexer: "reward-indexer",
   rewardExecutor: "reward-executor",
   health: "health-monitor",
+  aiReaper: "ai-reservation-reaper",
 } as const;
 
 export type QueueName = (typeof QUEUE)[keyof typeof QUEUE];

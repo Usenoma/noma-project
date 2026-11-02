@@ -5,8 +5,8 @@ import { createBitLaunchAdapter } from "./bitlaunch.js";
 import { createBitrefillAdapter } from "./bitrefill.js";
 import { createEsimAccessAdapter } from "./esimaccess.js";
 import { createIpRoyalAdapter } from "./iproyal.js";
-import { createMockEsimAdapter } from "./mock.js";
-import { createOpenRouterAdapter } from "./openrouter.js";
+import { createMockAiCreditsAdapter, createMockEsimAdapter, createMockProxyAdapter, createMockVpnAdapter } from "./mock.js";
+import { createNomaAiAdapter } from "./nomaAi.js";
 import type { SupplierAdapter } from "./types.js";
 import { createVpnResellersAdapter } from "./vpnresellers.js";
 import { webhookUrl } from "./webhooks.js";
@@ -32,8 +32,13 @@ function build(): Map<string, SupplierAdapter> {
     adapters.push(createVpnResellersAdapter(config.VPNRESELLERS_KEY, passwordSecret("vpnresellers"), { monthlyUsd: config.VPNRESELLERS_MONTHLY_USD }));
   }
   if (config.IPROYAL_KEY) adapters.push(createIpRoyalAdapter(config.IPROYAL_KEY, passwordSecret("iproyal")));
-  if (config.OPENROUTER_PROVISIONING_KEY) adapters.push(createOpenRouterAdapter(config.OPENROUTER_PROVISIONING_KEY));
-  if (config.NODE_ENV !== "production") adapters.push(createMockEsimAdapter());
+  if (config.OPENROUTER_API_KEY) adapters.push(createNomaAiAdapter());
+  if (config.NODE_ENV !== "production") {
+    adapters.push(createMockEsimAdapter());
+    adapters.push(createMockVpnAdapter());
+    adapters.push(createMockProxyAdapter());
+    adapters.push(createMockAiCreditsAdapter());
+  }
   return new Map(adapters.map((a) => [a.id, a]));
 }
 

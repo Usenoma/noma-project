@@ -1,8 +1,7 @@
 # Production stack. Run from this directory:
 #   docker compose -f docker-compose.prod.yml --env-file compose.env up -d --build
 # compose.env holds the compose-level values (DOMAIN, POSTGRES_PASSWORD, ...);
-# noma.env holds the application settings (see ../.env.example). The sweeper has its own
-# sweeper.env with PAYMENT_XPRV and only runs with --profile sweeper (ideally on another host).
+# noma.env holds the application settings (see ../.env.example).
 name: noma-prod
 
 x-backend: &backend
@@ -58,13 +57,6 @@ services:
     <<: *backend
     command: ["workers"]
     healthcheck: { test: ["CMD", "noma", "healthcheck-heartbeat", "120"], interval: 30s, timeout: 5s, retries: 3 }
-
-  sweeper:
-    <<: *backend
-    profiles: [sweeper]
-    env_file: [noma.env, sweeper.env]
-    command: ["sweeper"]
-    healthcheck: { test: ["CMD", "noma", "healthcheck-heartbeat", "900"], interval: 60s, timeout: 5s, retries: 3 }
 
   caddy:
     image: caddy:2.8-alpine

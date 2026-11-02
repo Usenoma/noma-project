@@ -43,13 +43,13 @@ export function quietSeconds(lastRunMs: number | null, nowMs: number, processSta
   return (nowMs - since) / 1000;
 }
 
-/** Refunds are paid from the refund hot wallet; an empty one makes every refund job fail. */
+/** Refunds are paid from the refund hot wallet; skip this check while automatic refunds are off. */
 async function checkRefundWallet(): Promise<void> {
-  if (!config.REFUND_PRIVATE_KEY) return;
+  if (!config.REFUNDS_AUTO_ENABLED || !config.REFUND_PRIVATE_KEY) return;
   const wallet = privateKeyToAccount(config.REFUND_PRIVATE_KEY as Hex).address;
   const eth = Number(formatUnits(await chain().getBalance({ address: wallet }), 18));
-  const usdc = config.USDC_ADDRESS
-    ? Number(formatUnits(await chain().readContract({ address: config.USDC_ADDRESS as Address, abi: erc20Abi, functionName: "balanceOf", args: [wallet] }), 6))
+  const usdc = config.USDG_ADDRESS
+    ? Number(formatUnits(await chain().readContract({ address: config.USDG_ADDRESS as Address, abi: erc20Abi, functionName: "balanceOf", args: [wallet] }), 6))
     : null;
   const low = eth < config.REFUND_WALLET_MIN_ETH || (usdc !== null && usdc < config.REFUND_WALLET_MIN_USDC);
   if (low) {
