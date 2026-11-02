@@ -393,11 +393,11 @@ describe("ghost mission chat", () => {
 });
 
 describe("ghost payment", () => {
-  it("refuses agent purchases without a budget, then buys within it", async () => {
+  it("needs a budget, asks for confirmation, and never orders before the user confirms", async () => {
     const before = await app.inject({ method: "GET", url: "/ghost/vault", headers: gh() });
     expect(before.json().budget_usd).toBe(0);
 
-    // budget 0 → purchase refused, no order created
+    // budget 0 → purchase refused, no confirmation, no order
     scripts.push(
       {
         content: null,
@@ -413,9 +413,10 @@ describe("ghost payment", () => {
     });
     expect(refused.statusCode).toBe(200);
     expect(refused.json().purchases).toEqual([]);
+    expect(refused.json().purchase_request).toBeNull();
     const ordersAfterRefusal = (await db.query("SELECT count(*)::int AS n FROM orders")).rows[0].n as number;
 
-    // set a budget, then the same request creates an order within it
+    // set a budget, then the agent must ASK — no order yet (prompt-injection guard)
     const budget = await app.inject({
       method: "PUT",
       url: "/ghost/budget",
@@ -434,16 +435,38 @@ describe("ghost payment", () => {
         content: null,
         toolCalls: [toolCall("p3", "purchase_product", { product_id: testProductId, reason: "user asked", fields: {} })],
       },
-      { content: "Order created — pay it from your wallet.", toolCalls: [] },
     );
-    const bought = await app.inject({
+    const asked = await app.inject({
       method: "POST",
       url: "/ghost/chat",
       headers: gh(),
       payload: { message: "Buy me the test AI credits." },
     });
-    expect(bought.statusCode).toBe(200);
-    const reply = bought.json();
+    expect(asked.statusCode).toBe(200);
+    const ask = asked.json();
+    expect(ask.purchases).toEqual([]);
+    expect(ask.purchase_request).toMatchObject({
+      product_id: testProductId,
+      title: "Test AI credits $5",
+      price_usd: 5,
+      reason: "user asked",
+    });
+    expect((await db.query("SELECT count(*)::int AS n FROM orders")).rows[0].n).toBe(ordersAfterRefusal);
+
+    // confirming creates exactly one order and records the purchase
+    scripts.push({ content: "Order created — pay it from your wallet.", toolCalls: [] });
+    const confirmed = await app.inject({
+      method: "POST",
+      url: "/ghost/chat",
+      headers: gh(),
+      payload: {
+        mission_id: ask.mission_id,
+        message: "Confirm the purchase.",
+        purchase: { decision: "approve" },
+      },
+    });
+    expect(confirmed.statusCode).toBe(200);
+    const reply = confirmed.json();
     expect(reply.purchases).toHaveLength(1);
     expect(reply.purchases[0]).toMatchObject({
       product_id: testProductId,
@@ -469,8 +492,37 @@ describe("ghost payment", () => {
     ]);
   });
 
+  it("cancels a stale purchase request when the user moves on", async () => {
+    const ordersBefore = (await db.query("SELECT count(*)::int AS n FROM orders")).rows[0].n as number;
+    scripts.push(
+      { content: null, toolCalls: [toolCall("p5", "purchase_product", { product_id: testProductId, reason: "maybe", fields: {} })] },
+    );
+    const asked = await app.inject({
+      method: "POST",
+      url: "/ghost/chat",
+      headers: gh(),
+      payload: { message: "Buy it." },
+    });
+    expect(asked.json().purchase_request).not.toBeNull();
+    const missionId = asked.json().mission_id as string;
+
+    // a new message without a decision drops the pending request; nothing is ordered
+    scripts.push({ content: "Okay, cancelled.", toolCalls: [] });
+    const movedOn = await app.inject({
+      method: "POST",
+      url: "/ghost/chat",
+      headers: gh(),
+      payload: { mission_id: missionId, message: "Never mind, let's do something else." },
+    });
+    expect(movedOn.statusCode).toBe(200);
+    expect((await db.query("SELECT count(*)::int AS n FROM orders")).rows[0].n).toBe(ordersBefore);
+    const receipt = await app.inject({ method: "GET", url: `/ghost/missions/${missionId}/receipt`, headers: gh() });
+    expect(receipt.json().actions.purchase_request).toBe(1);
+    expect(receipt.json().actions.purchase_cancel).toBe(1);
+  });
+
   it("refuses a purchase that would exceed the remaining budget", async () => {
-    await app.inject({ method: "PUT", url: "/ghost/budget", headers: gh(), payload: { max_usd: 5 } });
+    await app.inject({ method: "PUT", url: "/ghost/budget", headers: gh(), payload: { max_usd: 4 } });
     const ordersBefore = (await db.query("SELECT count(*)::int AS n FROM orders")).rows[0].n as number;
 
     scripts.push(
@@ -488,6 +540,7 @@ describe("ghost payment", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().purchases).toEqual([]);
+    expect(res.json().purchase_request).toBeNull();
     expect((await db.query("SELECT count(*)::int AS n FROM orders")).rows[0].n).toBe(ordersBefore);
   });
 });

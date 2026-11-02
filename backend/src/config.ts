@@ -111,6 +111,9 @@ const schema = z.object({
   GHOST_FETCH_MAX_BYTES: z.coerce.number().int().positive().default(200_000),
   GHOST_FETCH_MAX_CHARS: z.coerce.number().int().positive().default(12_000),
   GHOST_MAX_TOOL_TURNS: z.coerce.number().int().positive().default(12),
+  // Abuse guards for the free agent chat (each call spends LLM tokens).
+  GHOST_DAILY_IP_LIMIT: z.coerce.number().int().positive().default(100),
+  GHOST_DAILY_VAULT_MESSAGES: z.coerce.number().int().positive().default(60),
 
   // Public base URL of this API (e.g. https://api.example.com). Enables supplier webhooks, which
   // only speed up fulfillment; without it suppliers are polled.

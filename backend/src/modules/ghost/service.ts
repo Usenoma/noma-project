@@ -3,7 +3,7 @@ import { config } from "../../config.js";
 import { db } from "../../db/pool.js";
 import { badRequest, HttpError, notFound } from "../../lib/errors.js";
 import { getProduct, listProducts } from "../catalog/service.js";
-import { createOrder } from "../orders/service.js";
+import { createOrder, pickRequiredFields } from "../orders/service.js";
 import { remainingBudget, recordPurchase } from "./payment.js";
 import { aliasFor, activeProfile, type GhostProfile } from "./profiles.js";
 import { evaluateRule, getRules, type GhostRuleMode } from "./rules.js";
@@ -96,12 +96,22 @@ export interface GhostPurchase {
   expires_at: string;
 }
 
+/** A purchase the agent wants to make; nothing is ordered until the user confirms. */
+export interface GhostPurchaseRequest {
+  mission_id: string;
+  product_id: string;
+  title: string;
+  price_usd: number;
+  reason: string;
+}
+
 export interface GhostChatReply {
   mission_id: string;
   message: string;
   recommendations: GhostRecommendation[];
   purchases: GhostPurchase[];
   permission_request: GhostPermissionRequest | null;
+  purchase_request: GhostPurchaseRequest | null;
 }
 
 type ToolCall = {
@@ -128,9 +138,19 @@ interface PendingPermission {
   has_alias: boolean;
 }
 
+interface PendingPurchase {
+  tool_call_id: string;
+  product_id: string;
+  title: string;
+  price_usd: number;
+  fields: Record<string, string>;
+  reason: string;
+}
+
 interface MissionState {
   messages: ChatMessage[];
   pending: PendingPermission | null;
+  pendingPurchase?: PendingPurchase | null;
 }
 
 const TOOLS = [
@@ -199,7 +219,7 @@ const TOOLS = [
     function: {
       name: "purchase_product",
       description:
-        "Create a NOMA order within the vault's spending budget. Only when the user explicitly asked you to buy. The order needs every required delivery field (collect them from the user; never invent them). You never pay: the user settles the invoice from their own wallet.",
+        "Request a NOMA order within the vault's spending budget. Only when the user explicitly asked you to buy. The order needs every required delivery field (collect them from the user; never invent them). The user receives a confirmation card and must approve it; you never pay — they settle the invoice from their own wallet.",
       parameters: {
         type: "object",
         properties: {
@@ -262,7 +282,7 @@ async function runTool(
   profile: GhostProfile | null,
   log: MissionEventLogger,
   ctx: ToolContext,
-): Promise<{ content: string; pending: PendingPermission | null }> {
+): Promise<{ content: string; pending: PendingPermission | null; pendingPurchase?: PendingPurchase | null }> {
   const raw = JSON.parse(call.function.arguments || "{}");
   switch (call.function.name) {
     case "search_web": {
@@ -332,59 +352,53 @@ async function runTool(
           content:
             "Agent purchases are disabled: this vault has no remaining spending budget. Tell the user to set a budget in the vault settings first.",
           pending: null,
+          pendingPurchase: null,
         };
       }
       const product = await getProduct(input.product_id);
       if (!product) {
-        return { content: "Unknown product id. Use search_catalog and pick a listed product.", pending: null };
+        return { content: "Unknown product id. Use search_catalog and pick a listed product.", pending: null, pendingPurchase: null };
       }
       const price = Number(product.price_usd);
       if (price > remaining) {
         return {
           content: `Purchase refused: $${price.toFixed(2)} exceeds the remaining budget of $${remaining.toFixed(2)}. Tell the user and offer cheaper options.`,
           pending: null,
+          pendingPurchase: null,
         };
       }
-      let order: Awaited<ReturnType<typeof createOrder>>;
+      // required delivery fields must be collected from the user before the confirmation card
+      let fields: Record<string, string>;
       try {
-        order = await createOrder({ productId: product.id, fields: input.fields ?? {}, payAsset: "USDG" });
+        fields = pickRequiredFields(product.required_fields, input.fields ?? {});
       } catch (err) {
         return {
           content: JSON.stringify({
             error: err instanceof Error ? err.message : String(err),
-            hint: "If a required delivery field is missing or invalid, collect it from the user and retry.",
+            hint: "Collect the missing delivery field from the user and retry.",
           }),
           pending: null,
+          pendingPurchase: null,
         };
       }
-      await recordPurchase({
-        vault_id: ctx.vaultId,
-        mission_id: ctx.missionId,
-        order_id: order.orderId,
+      // Nothing is ordered yet: the user confirms on the next turn (prompt-injection guard).
+      await log("purchase_request", {
         product_id: product.id,
         title: product.title,
         price_usd: price,
-      });
-      await log("purchase", {
-        order_id: order.orderId,
-        product_id: product.id,
-        title: product.title,
-        price_usd: price,
-      });
-      ctx.addPurchase({
-        order_id: order.orderId,
-        order_key: order.orderKey,
-        product_id: product.id,
-        title: product.title,
-        price_usd: price,
-        asset: order.invoice.asset,
-        amount: order.invoice.amount,
-        pay_to: order.invoice.pay_to,
-        expires_at: order.invoice.expires_at.toISOString(),
+        reason: input.reason,
       });
       return {
-        content: `Order created: ${product.title} for $${price.toFixed(2)}. Invoice ${order.invoice.amount} ${order.invoice.asset} to ${order.invoice.pay_to}, expires ${order.invoice.expires_at.toISOString()}. The user pays from their wallet; show the order card and the remaining budget ($${(remaining - price).toFixed(2)}).`,
+        content: "",
         pending: null,
+        pendingPurchase: {
+          tool_call_id: call.id,
+          product_id: product.id,
+          title: product.title,
+          price_usd: price,
+          fields,
+          reason: input.reason,
+        },
       };
     }
     case "present_recommendations": {
@@ -399,12 +413,14 @@ async function runTool(
 }
 
 export type PermissionDecision = { decision: "approve" | "alias" | "deny"; value?: string };
+export type PurchaseDecision = { decision: "approve" | "cancel" };
 
 export async function chat(
   vaultId: string,
   missionId: string | undefined,
   message: string,
   permission?: PermissionDecision,
+  purchase?: PurchaseDecision,
 ): Promise<GhostChatReply> {
   // Ghost missions default to OpenRouter: privacy-focused prompts ("signup without a phone
   // number"…) get flagged by the MiMo-direct endpoint's moderation. GHOST_LLM_* overrides win.
@@ -412,6 +428,17 @@ export async function chat(
   if (!apiKey) throw new HttpError(503, "ghost agent not configured");
   const base = (config.GHOST_LLM_BASE_URL ?? config.OPENROUTER_BASE_URL ?? config.LLM_BASE_URL).replace(/\/$/, "");
   const model = config.GHOST_LLM_MODEL ?? config.LLM_MODEL;
+
+  // Free agent chat spends LLM tokens: cap the messages one vault may send per day.
+  const usedToday = await db.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM ghost_mission_messages m
+     JOIN ghost_missions g ON g.id = m.mission_id
+     WHERE g.vault_id = $1 AND m.role = 'user' AND m.created_at > now() - interval '1 day'`,
+    [vaultId],
+  );
+  if ((usedToday.rows[0]?.n ?? 0) >= config.GHOST_DAILY_VAULT_MESSAGES) {
+    throw new HttpError(429, "daily ghost agent limit reached for this vault; try again tomorrow");
+  }
 
   const rules = await getRules(vaultId);
   const profile = await activeProfile(vaultId);
@@ -433,6 +460,7 @@ export async function chat(
     const initialState: MissionState = {
       messages: [{ role: "system", content: SYSTEM_PROMPT }],
       pending: null,
+      pendingPurchase: null,
     };
     const { rows } = await db.query<{ id: string }>(
       "INSERT INTO ghost_missions (vault_id, profile_id, title, state) VALUES ($1, $2, $3, $4) RETURNING id",
@@ -451,6 +479,7 @@ export async function chat(
   };
 
   const messages: ChatMessage[] = [...state.messages];
+  const purchases: GhostPurchase[] = [];
 
   // a follow-up carrying a permission decision resolves the pending ask before anything else
   if (permission) {
@@ -477,6 +506,67 @@ export async function chat(
     messages.push({ role: "tool", tool_call_id: pending.tool_call_id, name: "request_identity", content });
   }
 
+  // every agent purchase needs an explicit confirmation from the user (prompt-injection guard)
+  if (purchase) {
+    const pending = state.pendingPurchase;
+    if (!pending) throw badRequest("no purchase request pending");
+    let content: string;
+    if (purchase.decision === "approve") {
+      const remaining = await remainingBudget(vaultId);
+      if (pending.price_usd > remaining) {
+        await log("purchase_cancel", { product_id: pending.product_id, reason: "budget" });
+        content = `The order could not be created: the remaining budget ($${remaining.toFixed(2)}) no longer covers $${pending.price_usd.toFixed(2)}. Tell the user.`;
+      } else {
+        try {
+          const order = await createOrder({ productId: pending.product_id, fields: pending.fields, payAsset: "USDG" });
+          await recordPurchase({
+            vault_id: vaultId,
+            mission_id: missionId2,
+            order_id: order.orderId,
+            product_id: pending.product_id,
+            title: pending.title,
+            price_usd: pending.price_usd,
+          });
+          await log("purchase", {
+            order_id: order.orderId,
+            product_id: pending.product_id,
+            title: pending.title,
+            price_usd: pending.price_usd,
+          });
+          purchases.push({
+            order_id: order.orderId,
+            order_key: order.orderKey,
+            product_id: pending.product_id,
+            title: pending.title,
+            price_usd: pending.price_usd,
+            asset: order.invoice.asset,
+            amount: order.invoice.amount,
+            pay_to: order.invoice.pay_to,
+            expires_at: order.invoice.expires_at.toISOString(),
+          });
+          content = `Confirmed. Order created: ${pending.title} for $${pending.price_usd.toFixed(2)}. Invoice ${order.invoice.amount} ${order.invoice.asset} to ${order.invoice.pay_to}, expires ${order.invoice.expires_at.toISOString()}. The user pays from their wallet; show the order card.`;
+        } catch (err) {
+          await log("purchase_cancel", { product_id: pending.product_id, reason: "order failed" });
+          content = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    } else {
+      await log("purchase_cancel", { product_id: pending.product_id, by: "user" });
+      content = "The user declined this purchase. Do not retry it.";
+    }
+    messages.push({ role: "tool", tool_call_id: pending.tool_call_id, name: "purchase_product", content });
+  } else if (state.pendingPurchase) {
+    // the user moved on without deciding: cancel the stale request, never keep it armed
+    const stale = state.pendingPurchase;
+    await log("purchase_cancel", { product_id: stale.product_id, by: "timeout" });
+    messages.push({
+      role: "tool",
+      tool_call_id: stale.tool_call_id,
+      name: "purchase_product",
+      content: "The pending purchase was cancelled by the user. Do not retry it.",
+    });
+  }
+
   messages.push({ role: "user", content: message });
   await db.query("INSERT INTO ghost_mission_messages (mission_id, role, content) VALUES ($1, 'user', $2)", [
     missionId2,
@@ -484,7 +574,6 @@ export async function chat(
   ]);
 
   let presented: GhostRecommendation[] = [];
-  const purchases: GhostPurchase[] = [];
   let reply = "";
 
   try {
@@ -530,7 +619,7 @@ export async function chat(
         break;
       }
       for (const call of toolCalls) {
-        let result: { content: string; pending: PendingPermission | null };
+        let result: { content: string; pending: PendingPermission | null; pendingPurchase?: PendingPurchase | null };
         try {
           result = await runTool(call, rules, profile, log, {
             vaultId,
@@ -543,7 +632,28 @@ export async function chat(
             },
           });
         } catch (err) {
-          result = { content: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), pending: null };
+          result = { content: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), pending: null, pendingPurchase: null };
+        }
+        if (result.pendingPurchase) {
+          const request = result.pendingPurchase;
+          await db.query("UPDATE ghost_missions SET state = $2, updated_at = now() WHERE id = $1", [
+            missionId2,
+            { messages, pending: null, pendingPurchase: request },
+          ]);
+          return {
+            mission_id: missionId2,
+            message: (assistant.content ?? "").trim() || "(awaiting your confirmation)",
+            recommendations: presented,
+            purchases,
+            permission_request: null,
+            purchase_request: {
+              mission_id: missionId2,
+              product_id: request.product_id,
+              title: request.title,
+              price_usd: request.price_usd,
+              reason: request.reason,
+            },
+          };
         }
         if (result.pending) {
           await db.query("UPDATE ghost_missions SET state = $2, updated_at = now() WHERE id = $1", [
@@ -561,6 +671,7 @@ export async function chat(
               reason: result.pending.reason,
               has_alias: result.pending.has_alias,
             },
+            purchase_request: null,
           };
         }
         messages.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: result.content });
@@ -575,7 +686,7 @@ export async function chat(
   const keep = [messages[0]!, ...messages.slice(-19)];
   await db.query("UPDATE ghost_missions SET state = $2, status = 'done', updated_at = now() WHERE id = $1", [
     missionId2,
-    { messages: keep, pending: null },
+    { messages: keep, pending: null, pendingPurchase: null },
   ]);
   await db.query("INSERT INTO ghost_mission_messages (mission_id, role, content) VALUES ($1, 'assistant', $2)", [
     missionId2,
@@ -588,6 +699,7 @@ export async function chat(
     recommendations: presented,
     purchases,
     permission_request: null,
+    purchase_request: null,
   };
 }
 

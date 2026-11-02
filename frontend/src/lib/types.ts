@@ -461,12 +461,21 @@ export interface GhostPermissionRequest {
   has_alias: boolean;
 }
 
+export interface GhostPurchaseRequest {
+  mission_id: string;
+  product_id: string;
+  title: string;
+  price_usd: number;
+  reason: string;
+}
+
 export interface GhostChatResponse {
   mission_id: string;
   message: string;
   recommendations: GhostRecommendation[];
   purchases: GhostPurchase[];
   permission_request: GhostPermissionRequest | null;
+  purchase_request: GhostPurchaseRequest | null;
 }
 
 export interface GhostMissionSummary {

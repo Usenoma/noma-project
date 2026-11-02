@@ -5,7 +5,13 @@ import Link from "next/link";
 import { ghostChat, ghostMissionGet, ghostMissionsList } from "@/lib/api";
 import { dateTime, fromRaw, usd } from "@/lib/format";
 import { orderUrl } from "@/lib/orderKey";
-import type { GhostMissionSummary, GhostPermissionRequest, GhostPurchase, GhostRecommendation } from "@/lib/types";
+import type {
+  GhostMissionSummary,
+  GhostPermissionRequest,
+  GhostPurchase,
+  GhostPurchaseRequest,
+  GhostRecommendation,
+} from "@/lib/types";
 import { GhostReceipt } from "./GhostReceipt";
 
 interface ChatMessage {
@@ -32,6 +38,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [permission, setPermission] = useState<GhostPermissionRequest | null>(null);
+  const [purchaseAsk, setPurchaseAsk] = useState<GhostPurchaseRequest | null>(null);
   const [decision, setDecision] = useState<"approve" | "alias" | "deny">("approve");
   const [value, setValue] = useState("");
   const [receiptId, setReceiptId] = useState<string | null>(null);
@@ -56,6 +63,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
     setMissionId(id);
     setReceiptId(null);
     setPermission(null);
+    setPurchaseAsk(null);
     setMessages([]);
     try {
       const m = await ghostMissionGet(vaultKey, id);
@@ -69,6 +77,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
     setMissionId(undefined);
     setMessages([]);
     setPermission(null);
+    setPurchaseAsk(null);
     setReceiptId(null);
     setError(null);
   }
@@ -76,12 +85,18 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
   async function send(
     message: string,
     permissionPayload?: { decision: "approve" | "alias" | "deny"; value?: string },
+    purchasePayload?: { decision: "approve" | "cancel" },
   ) {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await ghostChat(vaultKey, { mission_id: missionId, message, permission: permissionPayload });
+      const res = await ghostChat(vaultKey, {
+        mission_id: missionId,
+        message,
+        permission: permissionPayload,
+        purchase: purchasePayload,
+      });
       setMissionId(res.mission_id);
       setMessages((m) => [
         ...m,
@@ -92,6 +107,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
           purchases: res.purchases.length ? res.purchases : undefined,
         },
       ]);
+      setPurchaseAsk(res.purchase_request);
       if (res.permission_request) {
         setPermission(res.permission_request);
         setDecision("approve");
@@ -106,6 +122,17 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
       setBusy(false);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     }
+  }
+
+  function submitPurchase(decision: "approve" | "cancel") {
+    if (!purchaseAsk || busy) return;
+    const label =
+      decision === "approve"
+        ? `Confirm the purchase of ${purchaseAsk.title}.`
+        : `Cancel the purchase of ${purchaseAsk.title}.`;
+    setMessages((m) => [...m, { role: "you", text: label }]);
+    setPurchaseAsk(null);
+    void send(label, undefined, { decision });
   }
 
   function submit(e: React.FormEvent) {
@@ -264,7 +291,38 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
           <div ref={bottomRef} />
         </div>
 
-        {permission ? (
+        {purchaseAsk ? (
+          <div className="flex flex-col gap-2 border border-accent/50 bg-bg-raised p-4">
+            <p className="rule-label">purchase confirmation</p>
+            <p className="font-mono text-sm text-ink">
+              the agent wants to buy <span className="text-accent">{purchaseAsk.title}</span> for{" "}
+              <span className="tnum text-accent">{usd(purchaseAsk.price_usd)}</span>
+            </p>
+            <p className="font-mono text-xs text-ink-dim">{purchaseAsk.reason}</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => submitPurchase("approve")}
+                disabled={busy}
+                className="inline-flex min-h-11 items-center border border-accent px-3 font-mono text-xs text-accent uppercase transition-colors hover:bg-accent hover:text-bg"
+              >
+                confirm purchase
+              </button>
+              <button
+                type="button"
+                onClick={() => submitPurchase("cancel")}
+                disabled={busy}
+                className="inline-flex min-h-11 items-center border border-line px-3 font-mono text-xs text-ink-dim uppercase transition-colors hover:border-accent"
+              >
+                cancel
+              </button>
+            </div>
+            <p className="font-mono text-[0.62rem] text-ink-dim">
+              nothing is ordered until you confirm. the order is an invoice — you pay it from your
+              own wallet.
+            </p>
+          </div>
+        ) : permission ? (
           <form onSubmit={submitDecision} className="flex flex-col gap-2 border border-line bg-bg-raised p-4">
             <p className="rule-label">privacy check</p>
             <p className="font-mono text-sm text-ink">

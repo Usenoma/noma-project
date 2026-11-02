@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { badRequest, unauthorized } from "../../lib/errors.js";
+import { config } from "../../config.js";
+import { badRequest, HttpError, unauthorized } from "../../lib/errors.js";
 import { header } from "../../lib/walletRequest.js";
+import { redis } from "../../redis.js";
 import { createProfile, deleteProfile, listProfiles, updateProfile } from "../../modules/ghost/profiles.js";
 import { remainingBudget, setBudget } from "../../modules/ghost/payment.js";
 import { GHOST_FIELDS, getRules, setRules } from "../../modules/ghost/rules.js";
@@ -22,10 +24,12 @@ const permissionBody = z.object({
   decision: z.enum(["approve", "alias", "deny"]),
   value: z.string().min(1).max(500).optional(),
 });
+const purchaseBody = z.object({ decision: z.enum(["approve", "cancel"]) });
 const chatBody = z.object({
   mission_id: z.string().uuid().optional(),
   message: z.string().min(1).max(2000),
   permission: permissionBody.optional(),
+  purchase: purchaseBody.optional(),
 });
 const budgetBody = z.object({ max_usd: z.number().min(0).max(10_000) });
 
@@ -35,6 +39,17 @@ async function vaultOf(req: FastifyRequest): Promise<GhostVault> {
   const vault = await authenticateVault(key);
   if (!vault) throw unauthorized("invalid ghost vault key");
   return vault;
+}
+
+/** Daily per-IP cap on the free agent chat (each call spends LLM tokens). */
+async function chatIpGuard(req: FastifyRequest): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `ghost:ip:${req.ip}:${day}`;
+  const n = await redis.incr(key);
+  if (n === 1) await redis.expire(key, 86_400);
+  if (n > config.GHOST_DAILY_IP_LIMIT) {
+    throw new HttpError(429, "daily ghost agent limit reached; try again tomorrow");
+  }
 }
 
 export async function ghostRoutes(app: FastifyInstance) {
@@ -104,7 +119,8 @@ export async function ghostRoutes(app: FastifyInstance) {
       if (!enabled()) throw badRequest("ghost agent is not enabled");
       const vault = await vaultOf(req);
       const body = chatBody.parse(req.body);
-      return chat(vault.id, body.mission_id, body.message, body.permission);
+      await chatIpGuard(req);
+      return chat(vault.id, body.mission_id, body.message, body.permission, body.purchase);
     },
   );
 

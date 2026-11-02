@@ -358,6 +358,7 @@ export async function ghostChat(
     mission_id?: string;
     message: string;
     permission?: { decision: "approve" | "alias" | "deny"; value?: string };
+    purchase?: { decision: "approve" | "cancel" };
   },
 ): Promise<GhostChatResponse> {
   return req(`/ghost/chat`, {
