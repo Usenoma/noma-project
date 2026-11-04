@@ -376,6 +376,10 @@ export async function ghostMissionGet(vaultKey: string, id: string): Promise<Gho
   return req(`/ghost/missions/${id}`, { headers: ghostHeaders(vaultKey) });
 }
 
+export async function ghostMissionDelete(vaultKey: string, id: string): Promise<void> {
+  return req(`/ghost/missions/${id}`, { method: "DELETE", headers: ghostHeaders(vaultKey) });
+}
+
 export async function ghostMissionReceipt(vaultKey: string, id: string): Promise<GhostReceipt> {
   return req(`/ghost/missions/${id}/receipt`, { headers: ghostHeaders(vaultKey) });
 }

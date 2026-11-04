@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ghostChat, ghostMissionGet, ghostMissionsList } from "@/lib/api";
+import { ghostChat, ghostMissionDelete, ghostMissionGet, ghostMissionsList } from "@/lib/api";
 import { dateTime, fromRaw, usd } from "@/lib/format";
 import { orderUrl } from "@/lib/orderKey";
 import type {
@@ -67,6 +67,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
   const [decision, setDecision] = useState<"approve" | "alias" | "deny">("approve");
   const [value, setValue] = useState("");
   const [receiptId, setReceiptId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -114,6 +115,18 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
     setPurchaseAsk(null);
     setReceiptId(null);
     setError(null);
+  }
+
+  async function removeMission(id: string) {
+    if (busy) return;
+    setDeletingId(null);
+    try {
+      await ghostMissionDelete(vaultKey, id);
+      if (missionId === id) newMission();
+      await refreshMissions();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "could not delete the mission");
+    }
   }
 
   async function send(
@@ -210,21 +223,52 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
             <ul className="flex flex-col gap-0.5">
               {missions.map((m) => (
                 <li key={m.id}>
-                  <button
-                    type="button"
-                    onClick={() => void openMission(m.id)}
-                    title={m.title || undefined}
-                    className={`w-full rounded-md px-2 py-2 text-left font-mono text-xs transition-colors ${
-                      missionId === m.id
-                        ? "bg-bg text-ink"
-                        : "text-ink-dim hover:bg-bg hover:text-ink"
+                  <div
+                    className={`group flex items-stretch rounded-md transition-colors ${
+                      missionId === m.id ? "bg-bg" : "hover:bg-bg"
                     }`}
                   >
-                    <span className="block truncate">{m.title || "(untitled)"}</span>
-                    <span className="block text-[0.58rem] text-ink-dim">
-                      {dateTime(m.created_at)} · {m.status}
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => void openMission(m.id)}
+                      title={m.title || undefined}
+                      className={`min-w-0 flex-1 px-2 py-2 text-left font-mono text-xs transition-colors ${
+                        missionId === m.id ? "text-ink" : "text-ink-dim group-hover:text-ink"
+                      }`}
+                    >
+                      <span className="block truncate">{m.title || "(untitled)"}</span>
+                      <span className="block text-[0.58rem] text-ink-dim">
+                        {dateTime(m.created_at)} · {m.status}
+                      </span>
+                    </button>
+                    {deletingId === m.id ? (
+                      <span className="flex items-center gap-1 pr-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void removeMission(m.id)}
+                          className="rounded px-1.5 py-1 font-mono text-[0.58rem] text-warn uppercase hover:bg-bg"
+                        >
+                          delete
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingId(null)}
+                          className="rounded px-1.5 py-1 font-mono text-[0.58rem] text-ink-dim uppercase hover:bg-bg"
+                        >
+                          no
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={`delete mission ${m.title ?? ""}`}
+                        onClick={() => setDeletingId(m.id)}
+                        className="px-2 font-mono text-xs text-ink-dim opacity-0 transition-opacity hover:text-warn group-hover:opacity-100 focus:opacity-100"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>

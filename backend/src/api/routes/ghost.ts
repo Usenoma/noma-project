@@ -7,7 +7,7 @@ import { redis } from "../../redis.js";
 import { createProfile, deleteProfile, listProfiles, updateProfile } from "../../modules/ghost/profiles.js";
 import { remainingBudget, setBudget } from "../../modules/ghost/payment.js";
 import { GHOST_FIELDS, getRules, setRules } from "../../modules/ghost/rules.js";
-import { chat, getMission, listMissions, receipt } from "../../modules/ghost/service.js";
+import { chat, deleteMission, getMission, listMissions, receipt } from "../../modules/ghost/service.js";
 import { authenticateVault, createVault, type GhostVault } from "../../modules/ghost/vault.js";
 
 /** Ghost Agent is gated: with the flag off the routes answer "not enabled" at runtime. */
@@ -135,6 +135,14 @@ export async function ghostRoutes(app: FastifyInstance) {
     const vault = await vaultOf(req);
     const { id } = idParam.parse(req.params);
     return getMission(vault.id, id);
+  });
+
+  app.delete("/ghost/missions/:id", async (req, reply) => {
+    if (!enabled()) throw badRequest("ghost agent is not enabled");
+    const vault = await vaultOf(req);
+    const { id } = idParam.parse(req.params);
+    await deleteMission(vault.id, id);
+    return reply.status(204).send();
   });
 
   app.get("/ghost/missions/:id/receipt", async (req) => {

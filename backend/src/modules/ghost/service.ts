@@ -737,6 +737,15 @@ export async function getMission(vaultId: string, id: string) {
   return { ...mission, messages };
 }
 
+/**
+ * Delete a mission (messages, events and purchase links cascade). Orders created by the mission
+ * are NOT touched — they belong to the user and stay payable/deliverable.
+ */
+export async function deleteMission(vaultId: string, id: string): Promise<void> {
+  const res = await db.query("DELETE FROM ghost_missions WHERE id = $1 AND vault_id = $2", [id, vaultId]);
+  if (res.rowCount === 0) throw notFound("mission");
+}
+
 export interface ReceiptEvent {
   kind: string;
   detail: Record<string, unknown>;

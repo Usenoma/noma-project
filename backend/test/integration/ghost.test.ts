@@ -544,3 +544,42 @@ describe("ghost payment", () => {
     expect((await db.query("SELECT count(*)::int AS n FROM orders")).rows[0].n).toBe(ordersBefore);
   });
 });
+
+describe("mission management", () => {
+  it("deletes a mission with its trail, scoped to the vault", async () => {
+    scripts.push({ content: "quick mission done.", toolCalls: [] });
+    const created = await app.inject({
+      method: "POST",
+      url: "/ghost/chat",
+      headers: gh(),
+      payload: { message: "quick mission" },
+    });
+    const id = created.json().mission_id as string;
+
+    // another vault cannot delete it
+    const other = await app.inject({ method: "POST", url: "/ghost/vault", payload: {} });
+    const otherKey = other.json().vault_key as string;
+    const stolen = await app.inject({
+      method: "DELETE",
+      url: `/ghost/missions/${id}`,
+      headers: { "x-ghost-key": otherKey },
+    });
+    expect(stolen.statusCode).toBe(404);
+
+    const del = await app.inject({ method: "DELETE", url: `/ghost/missions/${id}`, headers: gh() });
+    expect(del.statusCode).toBe(204);
+    const list = await app.inject({ method: "GET", url: "/ghost/missions", headers: gh() });
+    expect(list.json().missions.map((m: { id: string }) => m.id)).not.toContain(id);
+    expect((await app.inject({ method: "DELETE", url: `/ghost/missions/${id}`, headers: gh() })).statusCode).toBe(404);
+  });
+
+  it("keeps orders when their mission is deleted", async () => {
+    // the purchase from the payment tests is still linked to its mission
+    const missionRow = (await db.query("SELECT mission_id, order_id FROM ghost_purchases LIMIT 1")).rows[0];
+    expect(missionRow).toBeTruthy();
+    const del = await app.inject({ method: "DELETE", url: `/ghost/missions/${missionRow.mission_id}`, headers: gh() });
+    expect(del.statusCode).toBe(204);
+    expect((await db.query("SELECT 1 FROM orders WHERE id = $1", [missionRow.order_id])).rowCount).toBe(1);
+    expect((await db.query("SELECT 1 FROM ghost_purchases WHERE mission_id = $1", [missionRow.mission_id])).rowCount).toBe(0);
+  });
+});
