@@ -47,8 +47,11 @@ export function buildServer(logStream?: { write(line: string): void }): FastifyI
     return reply.status(500).send({ error: "internal error" });
   });
 
-  // per-IP limits, shared across API instances via Redis; tighter on routes that cost money
-  app.register(rateLimit, { global: true, max: 120, timeWindow: "1 minute", redis: rateLimitRedis() });
+  // per-IP limits, shared across API instances via Redis; tighter on routes that cost money.
+  // Off in tests: every app.inject() call shares one IP, so a suite would trip the limiter.
+  if (config.NODE_ENV !== "test") {
+    app.register(rateLimit, { global: true, max: 120, timeWindow: "1 minute", redis: rateLimitRedis() });
+  }
 
   // the AI gateway is called from other apps/browsers; the bearer key is the auth
   app.register(cors, {
