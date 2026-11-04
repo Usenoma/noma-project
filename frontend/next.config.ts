@@ -10,6 +10,15 @@ const nextConfig: NextConfig = {
       },
     },
   },
+  // Chrome supports AVIF: it is typically 30-50% smaller than JPEG for the brand art.
+  images: {
+    formats: ["image/avif", "image/webp"],
+    minimumCacheTTL: 60 * 60 * 24 * 30,
+  },
+  compiler: {
+    // shave bytes and parse time on the client
+    removeConsole: process.env.NODE_ENV === "production",
+  },
   async headers() {
     // Static assets are content-addressed (_next/static) or rarely changed (brand media),
     // so let browsers keep them instead of revalidating on every visit.
@@ -17,6 +26,11 @@ const nextConfig: NextConfig = {
       {
         source: "/_next/static/:path*",
         headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+      {
+        // optimized images are addressed by (src, width, quality): cache them for a month
+        source: "/_next/image",
+        headers: [{ key: "Cache-Control", value: "public, max-age=2592000, immutable" }],
       },
       {
         source: "/brand/:path*",
