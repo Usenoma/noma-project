@@ -1,36 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NOMA frontend
 
-## Getting Started
+Next.js 16 (App Router) + React 19 + Tailwind v4 site for NOMA. Design and page specs:
+`../frontend.md`. Product/API contract: `../backend.md`.
 
-First, run the development server:
+## Run
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev     # http://localhost:3101, proxies /api/* to API_ORIGIN (default :3000)
+npm run build   # production build
+npm run lint    # eslint (must stay clean)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`next.config.ts` rewrites `/api/:path*` to `API_ORIGIN` (same-origin, no CORS). Use
+`NEXT_PUBLIC_API_URL` only when calling the API directly in local dev.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Layout
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Path | What |
+|---|---|
+| `src/app` | routes: home, market, product, checkout, order(s), rewards, lookup, collection, agent, ghost, docs, status, admin/ops |
+| `src/components` | shared UI (AgentChat, GhostChat/Vault/Receipt, InvoicePanel, FeatureCarousel, …) |
+| `src/lib` | API client (`api.ts`), types, feature flags (`features.ts`), order/ghost keys, wagmi config |
 
-## Learn More
+## Notes
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Feature flags** live in `src/lib/features.ts` (`NEXT_PUBLIC_FEATURE_*`, build-time). Gated
+  routes must render a "not available yet" state when off — never 404 (frontend.md §11.5/11.6).
+- **Wallet** is optional everywhere: `WalletScope` lazy-loads wagmi so light pages carry zero
+  wallet bytes; the header button is two-stage and connects on the first click.
+- **Keys stay client-side**: order keys live in the URL fragment; the ghost vault key is
+  localStorage with explicit opt-in. Never log either.
+- Static assets use cache headers from `next.config.ts`; brand media is content-busted with a
+  version query when replaced.

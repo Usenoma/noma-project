@@ -1,6 +1,7 @@
 # NOMA backend
 
-Launch-scope API + workers. Design: `../architecture.md`, `../backend.md`.
+API + workers (launch scope plus gated post-launch modules). Design: `../architecture.md`,
+`../backend.md`.
 
 ## Run
 
@@ -21,7 +22,7 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
 
 | Path | What |
 |------|------|
-| `src/api` | Fastify server + routes (catalog, orders, rewards/lookup/collection, agent, admin) |
+| `src/api` | Fastify server + routes (catalog, orders, auth/wallet, rewards/lookup/collection, agent, ai gateway, ghost, gated capsules/subscriptions/identity, admin) |
 | `src/modules/*` | Domain logic per module (backend.md §2) |
 | `src/suppliers` | `SupplierAdapter` interface, registry, adapters |
 | `src/workers/main.ts` | All BullMQ processors + repeatable schedules |
@@ -53,8 +54,8 @@ Env is loaded from `.env` via `--env-file-if-exists` (Node ≥ 22.9).
 | Bitrefill | `BITREFILL_KEY=<apiId>:<secret>` (Business) or `<apiKey>` (Personal), `BITREFILL_COUNTRIES` | unpaid invoice first, paid from `status()` (no idempotency key); catalog every 6 h |
 | BitLaunch | `BITLAUNCH_KEY` | 30-day VPS; server name `noma-<order>` as dedup key; `resource-expiry` deletes it |
 | OpenRouter | `OPENROUTER_PROVISIONING_KEY` | provisioned API key with credit limit, returned at purchase |
-| VPNresellers | `VPNRESELLERS_KEY`, `VPNRESELLERS_MONTHLY_USD` | one account per order with a supplier-side expiry; tested against fakes only |
-| IPRoyal | `IPROYAL_KEY` | residential sub-user per order; static ISP/datacenter proxies not offered yet |
+| VPNresellers | `VPNRESELLERS_KEY`, `VPNRESELLERS_MONTHLY_USD` | one account per order with a supplier-side expiry; adapter exists but the VPN category is retired from the market |
+| IPRoyal | `IPROYAL_KEY` | residential sub-user per order; proxy category retired from the market |
 
 **Webhooks** (optional, need `PUBLIC_API_URL`): a supplier notification only makes the order's
 status be re-read right away through the supplier API; the payload is never trusted and polling keeps
@@ -81,6 +82,7 @@ Full list with what blocks each item: `../backend.md` §14.
 
 - Automated 50/50 swap proposals (DEX routing on Robinhood Chain); today the Safe owners swap and an admin
   records it via `POST /admin/cycles/:id/acquisitions`. A RewardVault contract may later replace the Safe.
-- IPRoyal static ISP/datacenter proxies (credential format undocumented: needs one real order).
-- OpenRouter: resale terms and request/response shapes unconfirmed (no key yet).
-- No real supplier purchase or mainnet payment has been run yet.
+- $NOMA is not launched on Pons yet and NomaStaking is not deployed, so rewards/lookup/collection
+  return empty data until then.
+- eSIM sales are blocked while the eSIM Access supplier float is empty (the adapter answers "out of stock").
+- IPRoyal residential traffic only (static ISP/datacenter proxies not offered).
