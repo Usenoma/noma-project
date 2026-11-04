@@ -24,7 +24,10 @@ const FIELD_HINTS: Record<string, string> = {
 
 export function CheckoutFlow() {
   const params = useSearchParams();
-  const productId = params.get("product") ?? "";
+  // Capture the product once: after the invoice is created the address bar is rewritten to the
+  // order URL (key in the fragment), which drops ?product=. Reading searchParams live would then
+  // flip this component to the "no product selected" state and hide the invoice.
+  const [productId] = useState(() => params.get("product") ?? "");
   const { address } = useAccount();
   const { signMessageAsync, isPending: signing } = useSignMessage();
 

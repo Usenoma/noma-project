@@ -263,7 +263,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
                         type="button"
                         aria-label={`delete mission ${m.title ?? ""}`}
                         onClick={() => setDeletingId(m.id)}
-                        className="px-2 font-mono text-xs text-ink-dim opacity-0 transition-opacity hover:text-warn group-hover:opacity-100 focus:opacity-100"
+                        className="px-2 font-mono text-xs text-ink-dim opacity-60 transition-opacity hover:text-warn hover:opacity-100 focus:opacity-100"
                       >
                         ✕
                       </button>
@@ -303,6 +303,50 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
             ) : null}
           </div>
         </div>
+
+        {/* mobile mission switcher — the history rail is desktop-only */}
+        {missions.length > 0 ? (
+          <div className="flex items-center gap-1.5 overflow-x-auto border-b border-line px-2 py-1.5 md:hidden">
+            {missions.map((m) =>
+              deletingId === m.id ? (
+                <span
+                  key={m.id}
+                  className="flex shrink-0 items-center gap-2 rounded-full border border-warn/60 px-2.5 py-1 font-mono text-[0.6rem]"
+                >
+                  <button type="button" onClick={() => void removeMission(m.id)} className="text-warn uppercase">
+                    delete
+                  </button>
+                  <button type="button" onClick={() => setDeletingId(null)} className="text-ink-dim uppercase">
+                    no
+                  </button>
+                </span>
+              ) : (
+                <span
+                  key={m.id}
+                  className={`flex shrink-0 items-center rounded-full border ${
+                    missionId === m.id ? "border-accent text-accent" : "border-line text-ink-dim"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => void openMission(m.id)}
+                    className="max-w-40 truncate py-1 pl-2.5 pr-1 font-mono text-[0.6rem]"
+                  >
+                    {m.title || "(untitled)"}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`delete mission ${m.title ?? ""}`}
+                    onClick={() => setDeletingId(m.id)}
+                    className="px-1.5 py-1 font-mono text-[0.62rem] text-ink-dim hover:text-warn"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ),
+            )}
+          </div>
+        ) : null}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
