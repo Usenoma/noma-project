@@ -1,25 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import useSWR, { useSWRConfig } from "swr";
-import {
-  useAccount,
-  useBalance,
-  useReadContract,
-  useSendTransaction,
-  useSwitchChain,
-  useWriteContract,
-} from "wagmi";
-import { formatUnits } from "viem";
 import { getOrder } from "@/lib/api";
-import { ERC20_ABI, USDG_ADDRESS } from "@/lib/abi";
 import { fromRaw } from "@/lib/format";
-import { robinhoodChain } from "@/lib/wagmi";
-import type { Invoice } from "@/lib/types";
 import { Countdown } from "./Countdown";
 import { MonoBlock } from "./MonoBlock";
 import { QrBlock } from "./QrBlock";
 import { StateWord } from "./StateWord";
+
+// Wallet payment is a convenience on top of manual payment (address + QR). It carries
+// wagmi/viem, so it is loaded only after the user asks for it — order pages stay light.
+const PayButton = dynamic(() => import("./PayButton").then((m) => m.PayButton), {
+  ssr: false,
+  loading: () => null,
+});
 
 // The checkout figure: locked price, TTL countdown, payment address, QR, and one-click pay.
 // Polls the order while payment is pending.
@@ -44,6 +40,8 @@ export function InvoicePanel({
           : 5_000,
     },
   );
+
+  const [payWanted, setPayWanted] = useState(false);
 
   const invoice = order?.invoice;
   const decimals = invoice?.asset === "USDG" ? 6 : 18;
@@ -116,7 +114,13 @@ export function InvoicePanel({
                   <QrBlock value={invoice.pay_to} size={200} />
                 </div>
                 {payable ? (
-                  <PayButton invoice={invoice} decimals={decimals} onPaid={() => mutate(cacheKey)} />
+                  payWanted ? (
+                    <PayButton invoice={invoice} decimals={decimals} onPaid={() => mutate(cacheKey)} />
+                  ) : (
+                    <button type="button" onClick={() => setPayWanted(true)} className="btn w-full">
+                      pay {fromRaw(invoice.amount, decimals)} {invoice.asset} from wallet
+                    </button>
+                  )
                 ) : null}
               </>
             )}
@@ -134,106 +138,6 @@ export function InvoicePanel({
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-function PayButton({
-  invoice,
-  decimals,
-  onPaid,
-}: {
-  invoice: Invoice;
-  decimals: number;
-  onPaid: () => void;
-}) {
-  const { address, isConnected, chainId } = useAccount();
-  const { switchChain, isPending: switching } = useSwitchChain();
-  const { writeContractAsync, isPending: writing } = useWriteContract();
-  const { sendTransactionAsync, isPending: sending } = useSendTransaction();
-  const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
-
-  const { data: usdgBalance } = useReadContract({
-    address: USDG_ADDRESS,
-    abi: ERC20_ABI,
-    functionName: "balanceOf",
-    args: address ? [address] : undefined,
-    query: { enabled: !!address && invoice.asset === "USDG" },
-  });
-  const { data: ethBalance } = useBalance({
-    address,
-    query: { enabled: !!address && invoice.asset === "ETH" },
-  });
-
-  // Manual payment (copy address + amount) is always available; the button is a convenience.
-  if (!isConnected || !address) return null;
-
-  const needed = BigInt(invoice.amount);
-  const balance = invoice.asset === "USDG" ? (usdgBalance as bigint | undefined) : ethBalance?.value;
-  const insufficient = balance != null && balance < needed;
-  const wrongChain = chainId !== robinhoodChain.id;
-  const busy = writing || sending || switching;
-
-  async function pay() {
-    setError(null);
-    setSent(false);
-    try {
-      if (invoice.asset === "USDG") {
-        await writeContractAsync({
-          address: USDG_ADDRESS,
-          abi: ERC20_ABI,
-          functionName: "transfer",
-          args: [invoice.pay_to as `0x${string}`, needed],
-        });
-      } else {
-        await sendTransactionAsync({
-          to: invoice.pay_to as `0x${string}`,
-          value: needed,
-        });
-      }
-      setSent(true);
-      onPaid();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message.split("\n")[0] : "payment failed";
-      setError(msg);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {wrongChain ? (
-        <button
-          type="button"
-          onClick={() => switchChain({ chainId: robinhoodChain.id })}
-          disabled={switching}
-          className="w-full border border-warn px-4 py-3 font-mono text-sm tracking-widest text-warn uppercase hover:border-accent hover:text-accent disabled:opacity-50"
-        >
-          {switching ? "switching…" : "switch to robinhood chain"}
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={pay}
-          disabled={busy || insufficient}
-          className="btn w-full"
-        >
-          {busy
-            ? "confirm in wallet…"
-            : `pay ${fromRaw(invoice.amount, decimals)} ${invoice.asset} from wallet`}
-        </button>
-      )}
-      <div className="flex items-baseline justify-between font-mono text-[0.7rem] text-ink-dim">
-        <span>
-          balance{" "}
-          {balance != null ? `${formatUnits(balance, decimals)} ${invoice.asset}` : "—"}
-        </span>
-        {insufficient ? <span className="text-bad">insufficient balance</span> : null}
-      </div>
-      {sent ? (
-        <p className="font-mono text-xs text-ink-dim">payment sent — waiting for confirmation</p>
-      ) : null}
-      {error ? <p className="font-mono text-xs text-bad">{error}</p> : null}
     </div>
   );
 }
