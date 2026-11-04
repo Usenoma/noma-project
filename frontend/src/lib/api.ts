@@ -44,7 +44,12 @@ export class ApiError extends Error {
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      // only declare a JSON body when there is one: DELETE with an empty body and a JSON
+      // content-type is rejected by the API ("Body cannot be empty")
+      ...(init?.body != null ? { "content-type": "application/json" } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!res.ok) {
     let msg = `request failed (${res.status})`;

@@ -78,7 +78,7 @@ export default function DocsPage() {
             create an account, and identity is either a wallet signature or an order key.
           </p>
           <ul className="mt-3 flex flex-col gap-1 font-mono text-sm text-ink-dim">
-            <li>· eSIM · AI credits · VPN · proxy · VPS · gift cards</li>
+            <li>· eSIM · AI credits · VPS · gift cards</li>
             <li>· payments are wallet-to-wallet; the platform never holds your funds</li>
             <li>· staked $NOMA earns the weekly rewards (once the token is live)</li>
           </ul>

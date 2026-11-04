@@ -175,7 +175,7 @@ export default function Home() {
             num="01"
             title={
               <>
-                The market. <span className="accent-italic">Six categories, one ledger.</span>
+                The market. <span className="accent-italic">Four categories, one ledger.</span>
               </>
             }
             lead="Every row is a live product. Pick a category; the price shown is the cheapest one in it right now."
