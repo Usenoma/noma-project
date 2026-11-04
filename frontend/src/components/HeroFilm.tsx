@@ -2,9 +2,14 @@
 
 import { useEffect, useRef } from "react";
 
+interface NetworkInformation {
+  saveData?: boolean;
+  effectiveType?: string;
+}
+
 /**
- * The brand film plays only for people who have not asked for reduced motion.
- * Without JS, or with reduced motion, the poster is the hero image.
+ * The brand film plays only when the visitor allows motion and is not on a slow or
+ * data-saving connection. Otherwise the poster stays as the hero image.
  */
 export function HeroFilm() {
   const ref = useRef<HTMLVideoElement>(null);
@@ -13,7 +18,22 @@ export function HeroFilm() {
     const video = ref.current;
     if (!video) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    video.play().catch(() => {});
+
+    const connection = (navigator as Navigator & { connection?: NetworkInformation }).connection;
+    if (connection?.saveData) return;
+    if (connection?.effectiveType && /(^|-)2g$|slow-2g/.test(connection.effectiveType)) return;
+
+    // start the download only after the page is interactive; the poster covers the gap
+    const start = () => {
+      video.play().catch(() => {});
+    };
+    const idle = window.requestIdleCallback?.bind(window);
+    if (idle) {
+      const handle = idle(start, { timeout: 1200 });
+      return () => window.cancelIdleCallback?.(handle);
+    }
+    const timer = window.setTimeout(start, 300);
+    return () => window.clearTimeout(timer);
   }, []);
 
   return (
