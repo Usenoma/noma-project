@@ -139,13 +139,17 @@ export default function GhostPage() {
 
   // vault unlocked
   return (
-    <div className="flex flex-col gap-10">
-      <div>
-        <div className="rule-label">ghost agent</div>
-        <h1 className="mt-4 text-4xl tracking-[-0.045em] sm:text-5xl">Let AI act. Keep yourself private.</h1>
-        <p className="mt-3 font-mono text-xs text-ink-dim">
-          research missions run under your privacy rules; real personal data is only shared with your
-          explicit approval and never stored.
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="rule-label">ghost agent</div>
+          <h1 className="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
+            Let AI act. Keep yourself private.
+          </h1>
+        </div>
+        <p className="max-w-sm font-mono text-[0.65rem] leading-4 text-ink-dim">
+          research runs under your privacy rules; real personal data is only shared with your explicit
+          approval and never stored.
         </p>
       </div>
 
