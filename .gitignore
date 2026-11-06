@@ -10,3 +10,8 @@ dist/
 
 # raw brand source media — only the compressed public/brand files are tracked
 frontend/Noma Assets/
+
+# internal docs — local only
+/architecture.md
+/backend.md
+/frontend.md
