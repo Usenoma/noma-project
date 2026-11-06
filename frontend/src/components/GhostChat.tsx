@@ -280,7 +280,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
       </aside>
 
       {/* conversation */}
-      <section className="flex min-w-0 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-col">
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
           <div className="flex min-w-0 items-baseline gap-3">
             <p className="truncate font-mono text-xs text-ink">{activeTitle}</p>
@@ -348,7 +348,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
           </div>
         ) : null}
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-6">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
             {receiptId ? <GhostReceipt vaultKey={vaultKey} missionId={receiptId} /> : null}
 
