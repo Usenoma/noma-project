@@ -40,6 +40,10 @@ export function FeatureCarousel({ features }: { features: FeatureArt[] }) {
     <div
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
+      onFocusCapture={() => setPaused(true)}
+      onBlurCapture={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPaused(false);
+      }}
       className="flex flex-col gap-3"
     >
       <div className="relative mx-auto w-full max-w-5xl border border-line bg-bg">
@@ -110,6 +114,14 @@ export function FeatureCarousel({ features }: { features: FeatureArt[] }) {
               />
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setPaused((p) => !p)}
+            aria-label={paused ? "resume auto-advance" : "pause auto-advance"}
+            className="carousel-pause grid h-11 w-11 place-items-center border border-line font-mono text-[0.7rem] text-ink-dim transition-colors hover:border-accent hover:text-accent"
+          >
+            {paused ? "▶" : "❚❚"}
+          </button>
         </div>
       ) : null}
     </div>

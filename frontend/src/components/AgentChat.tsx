@@ -57,7 +57,12 @@ export function AgentChat() {
         </p>
       </div>
 
-      <div className="flex min-h-72 flex-col gap-4 border border-line bg-bg-raised p-4">
+      <div
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        className="flex min-h-72 flex-col gap-4 border border-line bg-bg-raised p-4"
+      >
         {messages.length === 0 ? (
           <div className="flex flex-col gap-3">
             <p className="font-mono text-sm text-ink-dim">
@@ -112,7 +117,11 @@ export function AgentChat() {
             </div>
           ))
         )}
-        {busy ? <p className="font-mono text-sm text-ink-dim">searching catalog…</p> : null}
+        {busy ? (
+          <p role="status" className="font-mono text-sm text-ink-dim">
+            searching catalog…
+          </p>
+        ) : null}
         <div ref={bottomRef} />
       </div>
 

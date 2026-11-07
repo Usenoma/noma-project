@@ -30,6 +30,11 @@ export function ConnectButton({ autoConnect = false }: { autoConnect?: boolean }
   const [error, setError] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
   const triedAuto = useRef(false);
+  const firstChoiceRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (choosing) firstChoiceRef.current?.focus();
+  }, [choosing]);
 
   const injectedConnector = connectors.find((c) => c.id === "injected") ?? connectors[0];
   const walletConnectConnector = connectors.find((c) => c.id === "walletConnect");
@@ -92,9 +97,10 @@ export function ConnectButton({ autoConnect = false }: { autoConnect?: boolean }
     <span className="flex flex-col items-end gap-1">
       {choosing && hasChoice ? (
         <span className="flex flex-col items-end gap-1">
-          {connectors.map((connector) => (
+          {connectors.map((connector, i) => (
             <button
               key={connector.uid}
+              ref={i === 0 ? firstChoiceRef : undefined}
               type="button"
               onClick={() => void connect(connector)}
               disabled={isPending}

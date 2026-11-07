@@ -306,6 +306,13 @@ h3 {
   }
 }
 
+/* The carousel never auto-advances under reduced motion, so the pause toggle would be a dead control. */
+@media (prefers-reduced-motion: reduce) {
+  .carousel-pause {
+    display: none;
+  }
+}
+
 /* iOS zooms any field under 16px on focus; keep the layout intact on phones and small tablets.
    This must come after the base .field rule to win the cascade. */
 @media (max-width: 767px) {

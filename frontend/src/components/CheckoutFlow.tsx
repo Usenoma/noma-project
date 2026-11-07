@@ -93,6 +93,8 @@ export function CheckoutFlow() {
       }
     }
     setFieldErrors(errors);
+    const first = Object.keys(errors)[0];
+    if (first) document.getElementById(`field-${first}`)?.focus();
     return Object.keys(errors).length === 0;
   }
 
@@ -208,6 +210,8 @@ export function CheckoutFlow() {
                   id={`field-${f.name}`}
                   value={fields[f.name] ?? ""}
                   onChange={(e) => setFields({ ...fields, [f.name]: e.target.value })}
+                  aria-invalid={fieldErrors[f.name] ? true : undefined}
+                  aria-describedby={fieldErrors[f.name] ? `field-${f.name}-error` : undefined}
                   className="field"
                 >
                   <option value="">—</option>
@@ -223,6 +227,8 @@ export function CheckoutFlow() {
                   type={f.type === "email" ? "email" : f.type === "number" ? "number" : "text"}
                   value={fields[f.name] ?? ""}
                   onChange={(e) => setFields({ ...fields, [f.name]: e.target.value })}
+                  aria-invalid={fieldErrors[f.name] ? true : undefined}
+                  aria-describedby={fieldErrors[f.name] ? `field-${f.name}-error` : undefined}
                   className="field"
                 />
               )}
@@ -230,7 +236,9 @@ export function CheckoutFlow() {
                 <p className="mt-1 text-xs text-ink-dim">{FIELD_HINTS[f.name]}</p>
               ) : null}
               {fieldErrors[f.name] ? (
-                <p className="mt-1 font-mono text-xs text-bad">{fieldErrors[f.name]}</p>
+                <p id={`field-${f.name}-error`} role="alert" className="mt-1 font-mono text-xs text-bad">
+                  {fieldErrors[f.name]}
+                </p>
               ) : null}
             </div>
           ))}
@@ -281,16 +289,23 @@ export function CheckoutFlow() {
             remember this order on this device
           </label>
 
-          {submitError ? <p className="font-mono text-sm text-bad">{submitError}</p> : null}
+          {submitError ? (
+            <p role="alert" className="font-mono text-sm text-bad">
+              {submitError}
+            </p>
+          ) : null}
 
           <button
             type="submit"
             disabled={submitting || signing}
+            aria-busy={submitting || signing}
             className="btn mt-2"
           >
-            {submitting || signing
+            {signing
               ? "confirm in wallet…"
-              : `Create invoice · ${usd(product.price_usd)}`}
+              : submitting
+                ? "creating invoice…"
+                : `Create invoice · ${usd(product.price_usd)}`}
           </button>
         </form>
       </div>

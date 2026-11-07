@@ -445,7 +445,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
             )}
 
             {busy ? (
-              <div className="flex items-center gap-3">
+              <div role="status" className="flex items-center gap-3">
                 <Avatar />
                 <div className="flex items-center gap-2 font-mono text-xs text-ink-dim">
                   <TypingDots />

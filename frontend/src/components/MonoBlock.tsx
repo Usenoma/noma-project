@@ -15,14 +15,19 @@ export function MonoBlock({
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(value);
+      setFailed(false);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // clipboard unavailable — user selects manually
+      // clipboard unavailable — say so instead of failing silently
+      setCopied(false);
+      setFailed(true);
+      setTimeout(() => setFailed(false), 2000);
     }
   }
 
@@ -37,10 +42,14 @@ export function MonoBlock({
       <button
         type="button"
         onClick={copy}
-        className="shrink-0 font-mono text-[0.7rem] tracking-widest text-ink-dim uppercase hover:text-accent"
+        aria-label={label ? `copy ${label}` : "copy value"}
+        className="inline-flex min-h-11 shrink-0 items-center px-1 font-mono text-[0.7rem] tracking-widest text-ink-dim uppercase hover:text-accent"
       >
-        {copied ? "copied" : "copy"}
+        {failed ? "copy failed" : copied ? "copied" : "copy"}
       </button>
+      <span role="status" aria-live="polite" className="sr-only">
+        {failed ? "copy failed, select the value instead" : copied ? "copied to clipboard" : ""}
+      </span>
     </span>
   );
 }

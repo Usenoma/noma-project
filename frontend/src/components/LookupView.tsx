@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { getLookup } from "@/lib/api";
 import { amount, dateTime, fromRaw, usd } from "@/lib/format";
@@ -15,12 +15,14 @@ export function LookupView() {
   const [result, setResult] = useState<LookupResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const addr = input.trim();
     if (!ADDRESS_RE.test(addr)) {
       setError("not a valid address — expected 0x followed by 40 hex characters");
+      inputRef.current?.focus();
       return;
     }
     setLoading(true);
@@ -51,21 +53,28 @@ export function LookupView() {
         </label>
         <div className="flex gap-2">
           <input
+            ref={inputRef}
             id="lookup-address"
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="0x…"
             spellCheck={false}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? "lookup-error" : undefined}
             className="field tnum min-w-0 flex-1"
           />
-          <button type="submit" disabled={loading} className="btn">
+          <button type="submit" disabled={loading} aria-busy={loading} className="btn">
             {loading ? "looking up…" : "look up"}
           </button>
         </div>
       </form>
 
-      {error ? <p className="font-mono text-sm text-bad">{error}</p> : null}
+      {error ? (
+        <p id="lookup-error" role="alert" className="font-mono text-sm text-bad">
+          {error}
+        </p>
+      ) : null}
 
       {result ? (
         <div className="flex flex-col gap-6">
