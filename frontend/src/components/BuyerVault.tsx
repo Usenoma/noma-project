@@ -467,7 +467,7 @@ export function BuyerVault() {
                 key={entry.value}
                 type="button"
                 onClick={() => setFilter(entry.value)}
-                className={`min-h-9 border px-2.5 font-mono text-[0.64rem] tracking-widest uppercase transition-colors ${
+                className={`min-h-11 border px-2.5 font-mono text-[0.64rem] tracking-widest uppercase transition-colors ${
                   filter === entry.value
                     ? "border-accent text-accent"
                     : "border-line text-ink-dim hover:text-ink"

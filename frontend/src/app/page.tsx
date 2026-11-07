@@ -96,10 +96,10 @@ export default function Home() {
               </p>
 
               <div className="hero-rise delay-4 mt-8 flex flex-wrap items-center gap-3">
-                <Link href="/market" className="btn">
+                <Link href="/market" className="btn w-full justify-center min-[400px]:w-auto">
                   Open the market
                 </Link>
-                <a href="#how" className="btn-pill">
+                <a href="#how" className="btn-pill w-full justify-center min-[400px]:w-auto">
                   How it works
                   <span className="pill-dot" aria-hidden>
                     ↓

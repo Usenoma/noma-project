@@ -221,7 +221,7 @@ export function GhostVault({ vaultKey }: { vaultKey: string }) {
                       type="button"
                       onClick={() => void setRule(field, mode)}
                       disabled={busy || (field === "wallet" && mode === "alias")}
-                      className={`inline-flex min-h-9 items-center border px-3 font-mono text-xs uppercase transition-colors ${
+                      className={`inline-flex min-h-11 items-center border px-3 font-mono text-xs uppercase transition-colors ${
                         rules[field] === mode ? "border-accent text-accent" : "border-line text-ink-dim hover:border-accent"
                       } disabled:opacity-40`}
                       title={field === "wallet" && mode === "alias" ? "wallet aliases are not offered" : undefined}

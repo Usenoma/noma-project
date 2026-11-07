@@ -72,7 +72,7 @@ export function RewardsCard() {
       )}
       <Link
         href="/rewards"
-        className="mt-5 inline-flex min-h-9 items-center font-mono text-[0.66rem] tracking-[0.16em] text-accent uppercase hover:underline"
+        className="mt-5 inline-flex min-h-11 items-center font-mono text-[0.66rem] tracking-[0.16em] text-accent uppercase hover:underline"
       >
         reward engine →
       </Link>

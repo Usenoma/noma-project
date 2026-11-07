@@ -510,7 +510,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
                     key={d}
                     type="button"
                     onClick={() => setDecision(d)}
-                    className={`inline-flex min-h-9 items-center rounded-md border px-3 font-mono text-xs uppercase transition-colors ${
+                    className={`inline-flex min-h-11 items-center rounded-md border px-3 font-mono text-xs uppercase transition-colors ${
                       decision === d ? "border-accent text-accent" : "border-line text-ink-dim hover:border-accent"
                     }`}
                   >

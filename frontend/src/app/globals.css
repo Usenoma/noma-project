@@ -298,9 +298,17 @@ h3 {
   opacity: 0.5;
 }
 
-/* iOS zooms any field under 16px on focus; keep the layout intact on phones.
+/* Dense desktop rails drop to 32px rows for mouse users; touch devices keep 44px targets. */
+@media (pointer: coarse) {
+  .facet-hit {
+    min-height: 2.75rem;
+    padding-block: 0.5rem;
+  }
+}
+
+/* iOS zooms any field under 16px on focus; keep the layout intact on phones and small tablets.
    This must come after the base .field rule to win the cascade. */
-@media (max-width: 639px) {
+@media (max-width: 767px) {
   .field {
     font-size: 1rem;
   }

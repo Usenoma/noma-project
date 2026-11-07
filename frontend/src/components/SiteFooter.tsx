@@ -95,7 +95,7 @@ export function SiteFooter() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className="inline-flex min-h-9 items-center text-sm text-ink transition-colors hover:text-accent"
+                    className="inline-flex min-h-11 items-center text-sm text-ink transition-colors hover:text-accent"
                   >
                     {item.label}
                   </Link>
@@ -104,7 +104,7 @@ export function SiteFooter() {
                   href="https://x.com/NomaApps"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex min-h-9 items-center gap-2 text-sm text-ink transition-colors hover:text-accent"
+                  className="inline-flex min-h-11 items-center gap-2 text-sm text-ink transition-colors hover:text-accent"
                 >
                   <XMark className="h-4 w-4" />
                   X ↗
@@ -113,7 +113,7 @@ export function SiteFooter() {
                   href="https://t.me/NOMA_Privacy"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex min-h-9 items-center gap-2 text-sm text-ink transition-colors hover:text-accent"
+                  className="inline-flex min-h-11 items-center gap-2 text-sm text-ink transition-colors hover:text-accent"
                 >
                   <TelegramMark className="h-4 w-4" />
                   Telegram ↗
@@ -122,7 +122,7 @@ export function SiteFooter() {
                   href="https://github.com/Usenoma/noma-project"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex min-h-9 items-center gap-2 text-sm text-ink transition-colors hover:text-accent"
+                  className="inline-flex min-h-11 items-center gap-2 text-sm text-ink transition-colors hover:text-accent"
                 >
                   <GithubMark className="h-4 w-4" />
                   GitHub ↗
@@ -138,7 +138,7 @@ export function SiteFooter() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className="inline-flex min-h-9 items-center text-sm text-ink transition-colors hover:text-accent"
+                    className="inline-flex min-h-11 items-center text-sm text-ink transition-colors hover:text-accent"
                   >
                     {item.label}
                   </Link>

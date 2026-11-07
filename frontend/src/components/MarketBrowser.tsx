@@ -80,7 +80,7 @@ export function MarketBrowser() {
           <button
             type="button"
             onClick={() => setParam("region", "")}
-            className={`flex min-h-11 items-center border-l py-1.5 pr-2 pl-3 text-left font-mono text-sm transition-colors lg:min-h-0 ${
+            className={`flex min-h-11 items-center border-l py-1.5 pr-2 pl-3 text-left font-mono text-sm transition-colors lg:min-h-0 facet-hit ${
               !region ? "border-accent text-accent" : "border-transparent text-ink-dim hover:text-ink"
             }`}
           >
@@ -91,7 +91,7 @@ export function MarketBrowser() {
               key={r}
               type="button"
               onClick={() => setParam("region", r)}
-              className={`flex min-h-11 items-center justify-between border-l py-1.5 pr-2 pl-3 text-left font-mono text-sm transition-colors lg:min-h-0 ${
+              className={`flex min-h-11 items-center justify-between border-l py-1.5 pr-2 pl-3 text-left font-mono text-sm transition-colors lg:min-h-0 facet-hit ${
                 region === r
                   ? "border-accent text-accent"
                   : "border-transparent text-ink-dim hover:text-ink"
@@ -122,7 +122,7 @@ export function MarketBrowser() {
             key={value}
             type="button"
             onClick={() => setParam("sort", value)}
-            className={`flex min-h-11 items-center border-l py-1.5 pr-2 pl-3 text-left font-mono text-sm transition-colors lg:min-h-0 ${
+            className={`flex min-h-11 items-center border-l py-1.5 pr-2 pl-3 text-left font-mono text-sm transition-colors lg:min-h-0 facet-hit ${
               sort === value
                 ? "border-accent text-accent"
                 : "border-transparent text-ink-dim hover:text-ink"
@@ -168,7 +168,7 @@ export function MarketBrowser() {
                   key={c || "all"}
                   type="button"
                   onClick={() => setParam("category", c)}
-                  className={`flex min-h-11 shrink-0 items-center whitespace-nowrap border-b-2 px-3 py-2 text-left font-mono text-sm transition-colors lg:min-h-0 lg:border-b-0 lg:border-l lg:py-1.5 lg:pr-2 lg:pl-3 ${
+                  className={`flex min-h-11 shrink-0 items-center whitespace-nowrap border-b-2 px-3 py-2 text-left font-mono text-sm transition-colors lg:min-h-0 lg:border-b-0 lg:border-l lg:py-1.5 lg:pr-2 lg:pl-3 facet-hit ${
                     active
                       ? "border-accent text-accent"
                       : "border-transparent text-ink-dim hover:text-ink"

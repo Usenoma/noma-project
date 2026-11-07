@@ -76,7 +76,7 @@ export function FeatureCarousel({ features }: { features: FeatureArt[] }) {
               type="button"
               onClick={() => go(index - 1)}
               aria-label="previous plate"
-              className="absolute top-1/2 left-3 grid h-9 w-9 -translate-y-1/2 place-items-center border border-line bg-bg/80 font-mono text-sm text-ink-dim backdrop-blur-sm transition-colors hover:border-accent hover:text-accent"
+              className="absolute top-1/2 left-2 grid h-11 w-11 -translate-y-1/2 place-items-center border border-line bg-bg/80 font-mono text-sm text-ink-dim backdrop-blur-sm transition-colors hover:border-accent hover:text-accent"
             >
               ←
             </button>
@@ -84,7 +84,7 @@ export function FeatureCarousel({ features }: { features: FeatureArt[] }) {
               type="button"
               onClick={() => go(index + 1)}
               aria-label="next plate"
-              className="absolute top-1/2 right-3 grid h-9 w-9 -translate-y-1/2 place-items-center border border-line bg-bg/80 font-mono text-sm text-ink-dim backdrop-blur-sm transition-colors hover:border-accent hover:text-accent"
+              className="absolute top-1/2 right-2 grid h-11 w-11 -translate-y-1/2 place-items-center border border-line bg-bg/80 font-mono text-sm text-ink-dim backdrop-blur-sm transition-colors hover:border-accent hover:text-accent"
             >
               →
             </button>
@@ -101,10 +101,14 @@ export function FeatureCarousel({ features }: { features: FeatureArt[] }) {
               onClick={() => go(i)}
               aria-label={`plate ${i + 1}: ${f.title}`}
               aria-current={i === index}
-              className={`h-1.5 rounded-full transition-all ${
-                i === index ? "w-6 bg-accent" : "w-1.5 bg-line-strong hover:bg-ink-dim"
-              }`}
-            />
+              className="grid h-11 w-11 place-items-center"
+            >
+              <span
+                className={`block h-1.5 rounded-full transition-all ${
+                  i === index ? "w-6 bg-accent" : "w-1.5 bg-line-strong hover:bg-ink-dim"
+                }`}
+              />
+            </button>
           ))}
         </div>
       ) : null}
