@@ -85,7 +85,7 @@ export function ConnectButton({ autoConnect = false }: { autoConnect?: boolean }
         onClick={() => disconnect()}
         title="disconnect"
         aria-label={`Disconnect ${address}`}
-        className="tnum inline-flex min-h-11 items-center gap-2 rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink uppercase transition-colors hover:border-accent hover:text-accent"
+        className="tnum inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink uppercase transition-colors hover:border-accent hover:text-accent"
       >
         <span className="block h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
         {shortAddress(address)}
@@ -104,7 +104,7 @@ export function ConnectButton({ autoConnect = false }: { autoConnect?: boolean }
               type="button"
               onClick={() => void connect(connector)}
               disabled={isPending}
-              className="inline-flex min-h-11 items-center rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink-dim uppercase transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+              className="inline-flex min-h-11 items-center whitespace-nowrap rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink-dim uppercase transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
             >
               {connectorLabel(connector)}
             </button>
@@ -114,7 +114,7 @@ export function ConnectButton({ autoConnect = false }: { autoConnect?: boolean }
         <button
           type="button"
           onClick={choose}
-          className="inline-flex min-h-11 items-center rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink-dim uppercase transition-colors hover:border-accent hover:text-accent"
+          className="inline-flex min-h-11 items-center whitespace-nowrap rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink-dim uppercase transition-colors hover:border-accent hover:text-accent"
         >
           {isPending ? "check wallet…" : "connect wallet"}
         </button>

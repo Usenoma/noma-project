@@ -76,7 +76,7 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-bg">
-      <div className="shell flex h-16 items-center gap-8">
+      <div className="shell flex h-16 items-center gap-4 lg:gap-8">
         <Link href="/" className="group flex items-center gap-2.5" aria-label="NOMA home">
           <span className="relative block h-8 w-8 overflow-hidden bg-black">
             <Image
@@ -93,7 +93,7 @@ export function SiteHeader() {
           </span>
         </Link>
 
-        <nav className="hidden items-center gap-6 md:flex">
+        <nav className="hidden items-center gap-4 md:flex lg:gap-6">
           {NAV.map((item) => {
             const active = pathname.startsWith(item.href);
             return (

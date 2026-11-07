@@ -7,7 +7,7 @@ import { WalletScope } from "./WalletScope";
 const ConnectButton = dynamic(() => import("./ConnectButton").then((m) => m.ConnectButton), {
   ssr: false,
   loading: () => (
-    <span className="inline-flex min-h-11 items-center rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink-dim uppercase">
+    <span className="inline-flex min-h-11 items-center whitespace-nowrap rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink-dim uppercase">
       loading wallet…
     </span>
   ),
@@ -24,7 +24,7 @@ export function WalletButton() {
       <button
         type="button"
         onClick={() => setWanted(true)}
-        className="inline-flex min-h-11 items-center rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink-dim uppercase transition-colors hover:border-accent hover:text-accent"
+        className="inline-flex min-h-11 items-center whitespace-nowrap rounded-full border border-line-strong px-3.5 font-mono text-[0.66rem] tracking-[0.12em] text-ink-dim uppercase transition-colors hover:border-accent hover:text-accent"
       >
         connect wallet
       </button>
