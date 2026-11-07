@@ -119,7 +119,7 @@ export function SiteFooter() {
                   Telegram ↗
                 </a>
                 <a
-                  href="https://github.com/Usenoma"
+                  href="https://github.com/Usenoma/noma-project"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex min-h-9 items-center gap-2 text-sm text-ink transition-colors hover:text-accent"
