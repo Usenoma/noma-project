@@ -53,7 +53,7 @@ export function InvoicePanel({
         <span className="font-mono text-[0.7rem] tracking-widest text-ink-dim uppercase">
           fig. — the invoice
         </span>
-        {order ? <StateWord state={order.status} /> : null}
+        {order ? <StateWord key={order.status} state={order.status} /> : null}
       </div>
       <div className="flex flex-col gap-4 p-4">
         {!order || !invoice ? (

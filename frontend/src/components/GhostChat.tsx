@@ -559,7 +559,7 @@ export function GhostChat({ vaultKey }: { vaultKey: string }) {
               type="submit"
               disabled={busy || !input.trim() || !!permission || !!purchaseAsk}
               aria-label="send"
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-accent font-mono text-lg text-bg transition-opacity hover:opacity-90 disabled:opacity-40"
+              className="press grid h-11 w-11 shrink-0 place-items-center rounded-full bg-accent font-mono text-lg text-bg transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               ↑
             </button>

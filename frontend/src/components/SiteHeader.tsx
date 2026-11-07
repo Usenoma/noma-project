@@ -117,7 +117,7 @@ export function SiteHeader() {
         <button
           ref={triggerRef}
           type="button"
-          className="ml-auto grid h-11 w-11 place-items-center rounded-full border border-line-strong text-ink transition-colors hover:border-accent hover:text-accent md:hidden"
+          className="press ml-auto grid h-11 w-11 place-items-center rounded-full border border-line-strong text-ink transition-colors hover:border-accent hover:text-accent md:hidden"
           onClick={() => setOpen(true)}
           aria-expanded={open}
           aria-controls="site-menu"
@@ -156,7 +156,7 @@ export function SiteHeader() {
               type="button"
               onClick={() => setOpen(false)}
               aria-label="Close menu"
-              className="grid h-11 w-11 place-items-center rounded-full border border-line-strong text-ink transition-colors hover:border-accent hover:text-accent"
+              className="press grid h-11 w-11 place-items-center rounded-full border border-line-strong text-ink transition-colors hover:border-accent hover:text-accent"
             >
               <span className="relative block h-4 w-4" aria-hidden>
                 <span className="absolute left-0 top-1/2 h-px w-4 rotate-45 bg-current" />
@@ -173,7 +173,7 @@ export function SiteHeader() {
                   key={item.href}
                   href={item.href}
                   onClick={() => setOpen(false)}
-                  className="group flex items-baseline justify-between border-b border-line py-4"
+                  className="menu-row group flex items-baseline justify-between border-b border-line py-4"
                 >
                   <span className="flex items-baseline gap-4">
                     <span className="tnum font-mono text-[0.62rem] tracking-[0.16em] text-accent">

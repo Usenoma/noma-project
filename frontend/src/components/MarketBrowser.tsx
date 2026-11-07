@@ -185,7 +185,7 @@ export function MarketBrowser() {
           <summary className="flex min-h-11 cursor-pointer items-center font-mono text-[0.68rem] tracking-[0.16em] text-ink-dim uppercase marker:text-accent">
             filters · region &amp; sort
           </summary>
-          <div className="flex flex-col gap-5 pb-4">
+          <div className="facet-body flex flex-col gap-5 pb-4">
             {regionPanel}
             {sortPanel}
           </div>

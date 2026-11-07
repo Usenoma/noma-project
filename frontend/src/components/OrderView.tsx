@@ -97,7 +97,7 @@ export function OrderView({
         <div className="rule-label">order</div>
         <div className="mt-3 flex flex-wrap items-baseline justify-between gap-4">
           <h1 className="text-3xl font-medium tracking-[-0.04em] sm:text-4xl">{order.title}</h1>
-          <StateWord state={order.status} size="lg" />
+          <StateWord key={order.status} state={order.status} size="lg" />
         </div>
         <p className="tnum mt-1 font-mono text-xs text-ink-dim">
           {order.id} · created {dateTime(order.created_at)} · {usd(order.price_usd)}

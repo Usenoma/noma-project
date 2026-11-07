@@ -143,7 +143,8 @@ h3 {
   transform: translateY(-1px);
 }
 .btn:active {
-  transform: translateY(0);
+  transform: translateY(0) scale(0.98);
+  transition-duration: 0.1s;
 }
 .btn:disabled {
   opacity: 0.4;
@@ -208,6 +209,21 @@ h3 {
 }
 .btn-pill:hover .pill-dot {
   transform: translateY(1px);
+}
+.btn-pill:active {
+  transform: scale(0.98);
+}
+
+/* Compact controls (icon buttons, pills) get the same press cue without a base transform. */
+.press {
+  transition:
+    transform 0.12s var(--ease-out),
+    opacity 0.12s var(--ease-out),
+    border-color 0.12s var(--ease-out),
+    color 0.12s var(--ease-out);
+}
+.press:active {
+  transform: scale(0.94);
 }
 
 /* Responsive shell: a measured column on laptops, a wider stage on large monitors,
@@ -467,6 +483,72 @@ main {
   background: var(--accent);
   transform: scaleX(0);
   transform-origin: 0 50%;
+}
+
+/* Mobile menu: rows arrive in reading order, not as one block. */
+@keyframes menu-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.menu-row {
+  animation: menu-row-in 0.4s var(--ease-out) both;
+}
+.menu-row:nth-child(1) {
+  animation-delay: 0.04s;
+}
+.menu-row:nth-child(2) {
+  animation-delay: 0.08s;
+}
+.menu-row:nth-child(3) {
+  animation-delay: 0.12s;
+}
+.menu-row:nth-child(4) {
+  animation-delay: 0.16s;
+}
+.menu-row:nth-child(5) {
+  animation-delay: 0.2s;
+}
+.menu-row:nth-child(6) {
+  animation-delay: 0.24s;
+}
+.menu-row:nth-child(7) {
+  animation-delay: 0.28s;
+}
+
+/* Facet disclosure: the opened panel fades down from its summary. */
+@keyframes facet-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+details[open] > .facet-body {
+  animation: facet-in 0.2s var(--ease-out);
+}
+
+/* A polled order/invoice state change announces itself once, then settles. */
+@keyframes state-flash {
+  0% {
+    opacity: 0.4;
+    transform: translateY(2px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+.state-flash {
+  animation: state-flash 0.35s var(--ease-out);
 }
 
 @media (prefers-reduced-motion: reduce) {

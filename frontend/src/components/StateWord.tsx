@@ -64,7 +64,7 @@ export function StateWord({
   const tone = TONES[state] ?? "dim";
   return (
     <span
-      className={`font-mono ${size === "lg" ? "text-2xl" : "text-sm"} ${TONE_CLASS[tone]}`}
+      className={`state-flash font-mono ${size === "lg" ? "text-2xl" : "text-sm"} ${TONE_CLASS[tone]}`}
       data-state={state}
     >
       {label}

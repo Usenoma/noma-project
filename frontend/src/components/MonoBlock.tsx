@@ -43,7 +43,9 @@ export function MonoBlock({
         type="button"
         onClick={copy}
         aria-label={label ? `copy ${label}` : "copy value"}
-        className="inline-flex min-h-11 shrink-0 items-center px-1 font-mono text-[0.7rem] tracking-widest text-ink-dim uppercase hover:text-accent"
+        className={`inline-flex min-h-11 shrink-0 items-center px-1 font-mono text-[0.7rem] tracking-widest uppercase transition-colors ${
+          failed ? "text-warn" : copied ? "text-accent" : "text-ink-dim hover:text-accent"
+        }`}
       >
         {failed ? "copy failed" : copied ? "copied" : "copy"}
       </button>
